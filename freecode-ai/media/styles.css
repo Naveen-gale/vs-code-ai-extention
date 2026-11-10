@@ -1,0 +1,14 @@
+/* FreeCode AI Base Styles */
+:root {
+  --freecode-font: var(--vscode-font-family, sans-serif);
+  --freecode-bg: var(--vscode-editor-background);
+  --freecode-fg: var(--vscode-editor-foreground);
+}
+
+body {
+  font-family: var(--freecode-font);
+  color: var(--freecode-fg);
+  background-color: var(--freecode-bg);
+  margin: 0;
+  padding: 0;
+}

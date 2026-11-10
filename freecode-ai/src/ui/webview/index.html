@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FreeCode AI</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Navigation Tabs -->
+  <nav class="tab-bar">
+    <button class="tab-btn active" data-tab="chat">💬 Chat</button>
+    <button class="tab-btn" data-tab="settings">⚙️ Providers</button>
+    <button class="tab-btn" data-tab="dashboard">📊 Usage</button>
+  </nav>
+
+  <!-- TAB 1: Chat Interface -->
+  <section id="view-chat" class="tab-content active">
+    <!-- Chat Header -->
+    <header class="status-bar-header">
+      <div id="active-model-pill" class="model-pill" title="Click to change model">
+        <span id="pill-provider">Gemini</span> / <span id="pill-model">1.5 Flash</span>
+      </div>
+      <div class="header-actions">
+        <button id="btn-new-chat" class="icon-btn" title="Start a fresh conversation">✨ New</button>
+        <button id="btn-clear-chat" class="icon-btn" title="Clear chat history">🗑️ Clear</button>
+      </div>
+    </header>
+
+    <!-- Message History -->
+    <div id="messages-container" class="messages-container">
+      <div id="empty-state" class="empty-state">
+        <h3>FreeCode AI Assistant</h3>
+        <p>Your local-first, multi-provider coding companion.<br>Select code or ask any programming question.</p>
+        <div class="quick-prompts">
+          <button class="quick-prompt-btn" data-prompt="Explain how the selected code works step by step.">💡 Explain selected code</button>
+          <button class="quick-prompt-btn" data-prompt="Refactor this code for readability and edge-case handling.">🛠️ Refactor & improve code</button>
+          <button class="quick-prompt-btn" data-prompt="Write unit tests covering edge cases for this function.">🧪 Write unit tests</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Typing Indicator -->
+    <div id="typing-indicator" class="typing-indicator">
+      <div class="spinner"></div>
+      <span id="typing-text">FreeCode AI is thinking...</span>
+    </div>
+
+    <!-- Input Area -->
+    <footer class="input-area">
+      <div class="input-row">
+        <textarea id="prompt-input" rows="1" placeholder="Ask FreeCode AI (Shift+Enter for newline)..."></textarea>
+        <button id="btn-send" class="send-btn">Send</button>
+      </div>
+    </footer>
+  </section>
+
+  <!-- TAB 2: Provider & Model Configuration -->
+  <section id="view-settings" class="tab-content">
+    <div class="settings-container">
+      <div class="form-group">
+        <label for="provider-select">Select AI Provider</label>
+        <select id="provider-select">
+          <option value="gemini">Google Gemini (Recommended - Free Tier)</option>
+          <option value="groq">Groq (Ultra-Fast LPUs)</option>
+          <option value="openrouter">OpenRouter (Multi-model & Free tiers)</option>
+          <option value="ollama">Ollama (100% Local - No API Key)</option>
+        </select>
+        <div id="provider-hint" class="form-hint">
+          Fast multimodal reasoning with generous free tier. <a id="api-key-link" href="#" target="_blank">Get API Key &rarr;</a>
+        </div>
+      </div>
+
+      <!-- API Key Field (Hidden for Ollama) -->
+      <div id="group-api-key" class="form-group">
+        <label for="api-key-input">API Key</label>
+        <input type="password" id="api-key-input" placeholder="Enter API key securely..." />
+        <div class="form-hint">Stored securely in VS Code SecretStorage. Never sent to third parties.</div>
+      </div>
+
+      <!-- Ollama Endpoint Field (Visible for Ollama) -->
+      <div id="group-endpoint" class="form-group" style="display: none;">
+        <label for="endpoint-input">Ollama Local Endpoint</label>
+        <input type="text" id="endpoint-input" value="http://127.0.0.1:11434" />
+        <div class="form-hint">Default local server endpoint. Make sure 'ollama serve' is running.</div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="action-row">
+        <button id="btn-save-key" class="primary-btn">Save Key</button>
+        <button id="btn-test-connection" class="secondary-btn">Test Connection</button>
+      </div>
+
+      <!-- Status Alert -->
+      <div id="connection-status" class="status-alert"></div>
+
+      <!-- Model Selection -->
+      <div class="form-group" style="margin-top: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+          <label for="model-select">Active Model</label>
+          <button id="btn-refresh-models" class="icon-btn" style="font-size: 10px;">🔄 Refresh from API</button>
+        </div>
+        <select id="model-select"></select>
+        <div id="model-description" class="form-hint"></div>
+      </div>
+
+      <button id="btn-apply-model" class="primary-btn">Apply Model</button>
+    </div>
+  </section>
+
+  <!-- TAB 3: Usage Dashboard -->
+  <section id="view-dashboard" class="tab-content">
+    <div class="dashboard-container">
+      <div class="form-group">
+        <label for="dashboard-provider-select">View Usage For Provider</label>
+        <select id="dashboard-provider-select">
+          <option value="current">Current Active Provider</option>
+          <option value="gemini">Google Gemini</option>
+          <option value="groq">Groq</option>
+          <option value="openrouter">OpenRouter</option>
+          <option value="ollama">Ollama</option>
+        </select>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card full-width">
+          <div class="stat-title">Cooldown & Health Status</div>
+          <div id="dash-cooldown" class="cooldown-badge normal">● Ready / Normal</div>
+          <div id="dash-last-req" class="stat-sub">Last request: Never</div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-title">Total Requests</div>
+          <div id="dash-total-reqs" class="stat-value">0</div>
+          <div id="dash-success-rate" class="stat-sub">100% success</div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-title">Rate Limit Errors</div>
+          <div id="dash-rate-limits" class="stat-value">0</div>
+          <div id="dash-failed-reqs" class="stat-sub">0 total failed</div>
+        </div>
+
+        <div class="stat-card full-width">
+          <div class="stat-title">Token Usage</div>
+          <div id="dash-total-tokens" class="stat-value">0</div>
+          <div class="stat-sub">
+            Prompt: <span id="dash-prompt-tokens">0</span> |
+            Completion: <span id="dash-comp-tokens">0</span>
+          </div>
+          <div id="dash-token-type" class="stat-sub" style="font-style: italic; margin-top: 4px;">
+            Estimated usage based on char ratio (provider reports exact tokens when supported).
+          </div>
+        </div>
+      </div>
+
+      <div class="action-row" style="margin-top: 12px;">
+        <button id="btn-refresh-dashboard" class="secondary-btn">Refresh Stats</button>
+        <button id="btn-reset-usage" class="secondary-btn" style="color: var(--vscode-errorForeground);">Reset Stats</button>
+      </div>
+
+      <!-- Backward-compatible hooks -->
+      <button id="provider" style="display:none;">Select AI Provider</button>
+      <button id="status" style="display:none;">Check Extension Status</button>
+    </div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

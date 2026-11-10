@@ -1,0 +1,74 @@
+{
+  "name": "freecode-ai",
+  "displayName": "FreeCode AI",
+  "description": "A free-first AI coding assistant for Visual Studio Code.",
+  "version": "0.1.0",
+  "publisher": "naveen",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Programming Languages",
+    "Machine Learning"
+  ],
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "onView:freecodeAI.sidebar",
+    "onCommand:freecodeAI.openSidebar",
+    "onCommand:freecodeAI.selectProvider",
+    "onCommand:freecodeAI.showStatus",
+    "onCommand:freecodeAI.setApiKey",
+    "onCommand:freecodeAI.newChat",
+    "onCommand:freecodeAI.openDashboard"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "freecodeAI",
+          "title": "FreeCode AI",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "freecodeAI": [
+        {
+          "type": "webview",
+          "id": "freecodeAI.sidebar",
+          "name": "FreeCode AI Assistant"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "freecodeAI.openSidebar",
+        "title": "FreeCode AI: Open Sidebar"
+      },
+      {
+        "command": "freecodeAI.selectProvider",
+        "title": "FreeCode AI: Select AI Provider"
+      },
+      {
+        "command": "freecodeAI.showStatus",
+        "title": "FreeCode AI: Show Extension Status"
+      },
+      {
+        "command": "freecodeAI.setApiKey",
+        "title": "FreeCode AI: Set Provider API Key"
+      },
+      {
+        "command": "freecodeAI.newChat",
+        "title": "FreeCode AI: Start New Chat"
+      },
+      {
+        "command": "freecodeAI.openDashboard",
+        "title": "FreeCode AI: Open Usage Dashboard"
+      }
+    ]
+  },
+  "scripts": {
+    "test": "node ./test/day1.test.js && node ./test/upgrade.test.js"
+  }
+}
