@@ -19,6 +19,7 @@
     "onCommand:freecodeAI.selectProvider",
     "onCommand:freecodeAI.showStatus",
     "onCommand:freecodeAI.setApiKey",
+    "onCommand:freecodeAI.deleteProvider",
     "onCommand:freecodeAI.newChat",
     "onCommand:freecodeAI.openDashboard"
   ],
@@ -59,6 +60,10 @@
         "title": "FreeCode AI: Set Provider API Key"
       },
       {
+        "command": "freecodeAI.deleteProvider",
+        "title": "FreeCode AI: Delete Provider Configuration"
+      },
+      {
         "command": "freecodeAI.newChat",
         "title": "FreeCode AI: Start New Chat"
       },
@@ -69,6 +74,6 @@
     ]
   },
   "scripts": {
-    "test": "node ./test/day1.test.js && node ./test/upgrade.test.js"
+    "test": "node ./test/day1.test.js && node ./test/upgrade.test.js && node ./test/multiProvider.test.js && node ./test/day2Ui.test.js"
   }
 }

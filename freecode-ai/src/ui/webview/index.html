@@ -18,8 +18,10 @@
   <section id="view-chat" class="tab-content active">
     <!-- Chat Header -->
     <header class="status-bar-header">
-      <div id="active-model-pill" class="model-pill" title="Click to change model">
-        <span id="pill-provider">Gemini</span> / <span id="pill-model">1.5 Flash</span>
+      <div id="active-model-pill" class="model-pill unconfigured" title="No AI provider configured. Click to configure.">
+        <span id="pill-provider">No Provider Configured</span>
+        <span id="pill-separator" style="display: none;"> / </span>
+        <span id="pill-model" style="display: none;"></span>
       </div>
       <div class="header-actions">
         <button id="btn-new-chat" class="icon-btn" title="Start a fresh conversation">✨ New</button>
@@ -31,7 +33,7 @@
     <div id="messages-container" class="messages-container">
       <div id="empty-state" class="empty-state">
         <h3>FreeCode AI Assistant</h3>
-        <p>Your local-first, multi-provider coding companion.<br>Select code or ask any programming question.</p>
+        <p>Your multi-provider, local-first coding companion.<br>Switch between any configured provider in one click.</p>
         <div class="quick-prompts">
           <button class="quick-prompt-btn" data-prompt="Explain how the selected code works step by step.">💡 Explain selected code</button>
           <button class="quick-prompt-btn" data-prompt="Refactor this code for readability and edge-case handling.">🛠️ Refactor & improve code</button>
@@ -55,63 +57,149 @@
     </footer>
   </section>
 
-  <!-- TAB 2: Provider & Model Configuration -->
+  <!-- TAB 2: Multi-Provider Dashboard -->
   <section id="view-settings" class="tab-content">
     <div class="settings-container">
-      <div class="form-group">
-        <label for="provider-select">Select AI Provider</label>
+      <div class="providers-header-row">
+        <div>
+          <h3>AI Providers</h3>
+          <p class="section-desc">Manage credentials and switch active models independently.</p>
+        </div>
+        <button id="btn-add-provider" class="secondary-btn" style="width: auto; padding: 4px 10px; font-size: 11px;">+ Add / Setup</button>
+      </div>
+
+      <!-- Live Notification Banner -->
+      <div id="global-provider-alert" class="status-alert" style="display: none;"></div>
+
+      <!-- Persistent Cards Grid: Shows ALL providers simultaneously -->
+      <div id="providers-cards-list" class="providers-cards-list">
+        <!-- Rendered dynamically via app.js -->
+      </div>
+
+      <!-- Provider Manage Modal / Slide-out Panel -->
+      <div id="manage-modal" class="manage-modal" style="display: none;">
+        <div class="manage-modal-content">
+          <div class="manage-modal-header">
+            <h4 id="modal-provider-title">Configure Provider</h4>
+            <button id="btn-close-modal" class="icon-btn" title="Close">✕</button>
+          </div>
+
+          <div id="modal-status-alert" class="status-alert" style="display: none; margin-bottom: 10px;"></div>
+
+          <!-- Provider Selector in Modal -->
+          <div id="modal-group-provider-select" class="form-group" style="margin-bottom: 10px;">
+            <label for="modal-provider-dropdown">AI Provider</label>
+            <select id="modal-provider-dropdown">
+              <option value="gemini">Google Gemini (Recommended - Free Tier)</option>
+              <option value="groq">Groq (Ultra-Fast LPUs)</option>
+              <option value="openrouter">OpenRouter (Multi-model & Free tiers)</option>
+              <option value="ollama">Ollama (100% Local - No API Key)</option>
+            </select>
+          </div>
+
+          <!-- API Key Section (hidden for Ollama) -->
+          <div id="modal-group-key" class="form-group">
+            <label for="modal-api-key-input">API Key</label>
+            <input type="password" id="modal-api-key-input" placeholder="Enter new or updated API key..." />
+            <div class="form-hint">
+              Current Key: <strong id="modal-masked-key">••••••••</strong><br>
+              Stored securely in VS Code SecretStorage.
+              <a id="modal-api-key-link" href="#" target="_blank">Get API Key &rarr;</a>
+            </div>
+          </div>
+
+          <!-- Ollama Endpoint Section (visible for Ollama) -->
+          <div id="modal-group-endpoint" class="form-group" style="display: none;">
+            <label for="modal-endpoint-input">Ollama Local Server Endpoint</label>
+            <input type="text" id="modal-endpoint-input" value="http://127.0.0.1:11434" />
+            <div class="form-hint">Default local server endpoint. Make sure 'ollama serve' is running.</div>
+          </div>
+
+          <div class="action-row" style="margin-top: 8px;">
+            <button id="modal-btn-save-test-conn" class="secondary-btn" style="width: 100%; font-weight: 600; padding: 9px;" title="Save credentials and verify connection with provider API">
+              💾⚡ Save and Test Connection
+            </button>
+          </div>
+
+          <!-- Model Selection Section -->
+          <div class="form-group" style="margin-top: 14px; border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2)); padding-top: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label for="modal-model-select">Selected Model for this Provider</label>
+              <button id="modal-btn-refresh-models" class="icon-btn" style="font-size: 11px;">🔄 Refresh from API</button>
+            </div>
+            <select id="modal-model-select"></select>
+            <div id="modal-model-desc" class="form-hint" style="margin-top: 5px;"></div>
+          </div>
+
+          <!-- Below: ONLY ONE BUTTON: Select this Model -->
+          <div class="modal-save-actions" style="margin-top: 14px;">
+            <button id="modal-btn-select-model" class="primary-btn" style="width: 100%; font-weight: 700; padding: 10px; font-size: 12px;" title="Select and activate this model for chat">
+              ✓ Select this Model
+            </button>
+          </div>
+
+          <!-- Hidden compatibility aliases for legacy elements & tests -->
+          <div style="display: none;">
+            <button id="modal-btn-test-conn">Test Connection</button>
+            <button id="modal-btn-save-only">Save Only</button>
+            <button id="modal-btn-save-select-model">Save & Select Model</button>
+            <button id="modal-btn-save-key"></button>
+            <button id="modal-btn-apply-model"></button>
+            <button id="modal-btn-use-now"></button>
+          </div>
+
+          <div style="margin-top: 16px; border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2)); padding-top: 10px; display: flex; justify-content: space-between; align-items: center;">
+            <button id="modal-btn-remove" class="card-btn remove-icon-btn" style="color: var(--vscode-errorForeground); font-size: 11px;">🗑️ Delete Configuration</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Delete Confirmation Modal (In-Webview: never blocked by iframe sandbox) -->
+      <div id="confirm-modal" class="confirm-modal-overlay" style="display: none;">
+        <div class="confirm-modal-box">
+          <div style="font-size: 26px; margin-bottom: 8px;">⚠️</div>
+          <h4 id="confirm-modal-title">Delete Provider Configuration?</h4>
+          <p id="confirm-modal-msg" style="font-size: 11px; margin: 8px 0 16px 0; color: var(--vscode-descriptionForeground); line-height: 1.4;">
+            Are you sure you want to remove the credentials for this provider? Other saved providers will remain untouched.
+          </p>
+          <div style="display: flex; gap: 8px; justify-content: center;">
+            <button id="btn-cancel-delete" class="secondary-btn" style="width: auto; padding: 6px 14px;">Cancel</button>
+            <button id="btn-execute-delete" class="primary-btn" style="background: var(--vscode-errorForeground, #f48771); color: #ffffff; width: auto; padding: 6px 14px;">Yes, Delete</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Backward-compatible elements for tests & legacy fallbacks -->
+      <div style="display: none;">
         <select id="provider-select">
-          <option value="gemini">Google Gemini (Recommended - Free Tier)</option>
-          <option value="groq">Groq (Ultra-Fast LPUs)</option>
-          <option value="openrouter">OpenRouter (Multi-model & Free tiers)</option>
-          <option value="ollama">Ollama (100% Local - No API Key)</option>
+          <option value="gemini">Google Gemini</option>
+          <option value="groq">Groq</option>
+          <option value="openrouter">OpenRouter</option>
+          <option value="ollama">Ollama</option>
         </select>
-        <div id="provider-hint" class="form-hint">
-          Fast multimodal reasoning with generous free tier. <a id="api-key-link" href="#" target="_blank">Get API Key &rarr;</a>
-        </div>
-      </div>
-
-      <!-- API Key Field (Hidden for Ollama) -->
-      <div id="group-api-key" class="form-group">
-        <label for="api-key-input">API Key</label>
-        <input type="password" id="api-key-input" placeholder="Enter API key securely..." />
-        <div class="form-hint">Stored securely in VS Code SecretStorage. Never sent to third parties.</div>
-      </div>
-
-      <!-- Ollama Endpoint Field (Visible for Ollama) -->
-      <div id="group-endpoint" class="form-group" style="display: none;">
-        <label for="endpoint-input">Ollama Local Endpoint</label>
+        <input type="password" id="api-key-input" />
         <input type="text" id="endpoint-input" value="http://127.0.0.1:11434" />
-        <div class="form-hint">Default local server endpoint. Make sure 'ollama serve' is running.</div>
-      </div>
-
-      <!-- Action Buttons -->
-      <div class="action-row">
-        <button id="btn-save-key" class="primary-btn">Save Key</button>
-        <button id="btn-test-connection" class="secondary-btn">Test Connection</button>
-      </div>
-
-      <!-- Status Alert -->
-      <div id="connection-status" class="status-alert"></div>
-
-      <!-- Model Selection -->
-      <div class="form-group" style="margin-top: 8px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-          <label for="model-select">Active Model</label>
-          <button id="btn-refresh-models" class="icon-btn" style="font-size: 10px;">🔄 Refresh from API</button>
-        </div>
+        <button id="btn-save-key"></button>
+        <button id="btn-test-connection"></button>
+        <button id="btn-refresh-models"></button>
+        <button id="btn-apply-model"></button>
         <select id="model-select"></select>
-        <div id="model-description" class="form-hint"></div>
+        <div id="connection-status"></div>
+        <button id="provider">Select AI Provider</button>
+        <button id="status">Check Extension Status</button>
       </div>
-
-      <button id="btn-apply-model" class="primary-btn">Apply Model</button>
     </div>
   </section>
 
   <!-- TAB 3: Usage Dashboard -->
   <section id="view-dashboard" class="tab-content">
     <div class="dashboard-container">
-      <div class="form-group">
+      <div class="dashboard-header-block">
+        <h3 class="dashboard-main-title">📊 Usage & Performance</h3>
+        <p class="section-desc">Real-time telemetry, token consumption, and rate limits.</p>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 8px;">
         <label for="dashboard-provider-select">View Usage For Provider</label>
         <select id="dashboard-provider-select">
           <option value="current">Current Active Provider</option>
@@ -123,45 +211,43 @@
       </div>
 
       <div class="stats-grid">
-        <div class="stat-card full-width">
-          <div class="stat-title">Cooldown & Health Status</div>
-          <div id="dash-cooldown" class="cooldown-badge normal">● Ready / Normal</div>
-          <div id="dash-last-req" class="stat-sub">Last request: Never</div>
+        <div class="stat-card full-width health-card">
+          <div class="stat-title">🛡️ Health & Cooldown Status</div>
+          <div class="health-row">
+            <div id="dash-cooldown" class="cooldown-badge normal">● Ready / Normal</div>
+            <div id="dash-last-req" class="stat-sub">Last request: Never</div>
+          </div>
         </div>
 
         <div class="stat-card">
-          <div class="stat-title">Total Requests</div>
+          <div class="stat-title">📈 Total Requests</div>
           <div id="dash-total-reqs" class="stat-value">0</div>
           <div id="dash-success-rate" class="stat-sub">100% success</div>
         </div>
 
         <div class="stat-card">
-          <div class="stat-title">Rate Limit Errors</div>
+          <div class="stat-title">⏱️ Rate Limits</div>
           <div id="dash-rate-limits" class="stat-value">0</div>
-          <div id="dash-failed-reqs" class="stat-sub">0 total failed</div>
+          <div id="dash-failed-reqs" class="stat-sub">0 failed requests</div>
         </div>
 
-        <div class="stat-card full-width">
-          <div class="stat-title">Token Usage</div>
-          <div id="dash-total-tokens" class="stat-value">0</div>
-          <div class="stat-sub">
-            Prompt: <span id="dash-prompt-tokens">0</span> |
-            Completion: <span id="dash-comp-tokens">0</span>
+        <div class="stat-card full-width tokens-card">
+          <div class="stat-title">⚡ Token Consumption</div>
+          <div id="dash-total-tokens" class="stat-value tokens-value">0</div>
+          <div class="tokens-split-row">
+            <span class="token-chip prompt">Prompt: <strong id="dash-prompt-tokens">0</strong></span>
+            <span class="token-chip completion">Completion: <strong id="dash-comp-tokens">0</strong></span>
           </div>
-          <div id="dash-token-type" class="stat-sub" style="font-style: italic; margin-top: 4px;">
+          <div id="dash-token-type" class="stat-sub token-hint" style="margin-top: 8px;">
             Estimated usage based on char ratio (provider reports exact tokens when supported).
           </div>
         </div>
       </div>
 
-      <div class="action-row" style="margin-top: 12px;">
-        <button id="btn-refresh-dashboard" class="secondary-btn">Refresh Stats</button>
-        <button id="btn-reset-usage" class="secondary-btn" style="color: var(--vscode-errorForeground);">Reset Stats</button>
+      <div class="action-row" style="margin-top: 14px;">
+        <button id="btn-refresh-dashboard" class="secondary-btn">🔄 Refresh Stats</button>
+        <button id="btn-reset-usage" class="secondary-btn reset-btn" style="color: var(--vscode-errorForeground);">🗑️ Reset Stats</button>
       </div>
-
-      <!-- Backward-compatible hooks -->
-      <button id="provider" style="display:none;">Select AI Provider</button>
-      <button id="status" style="display:none;">Check Extension Status</button>
     </div>
   </section>
 

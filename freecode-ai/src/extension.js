@@ -3,6 +3,7 @@ const { FreeCodeSidebarProvider } = require("./ui/sidebarProvider");
 const { SecretManager } = require("./security/secretManager");
 const { UsageTracker } = require("./usage/usageTracker");
 const { ChatController } = require("./chat/chatController");
+const { ProviderManager } = require("./providers/providerManager");
 const { PROVIDERS, PROVIDER_METADATA } = require("./config/providers");
 
 /**
@@ -16,17 +17,22 @@ function activate(context) {
         // Initialize core services
         const secretManager = new SecretManager(context.secrets);
         const usageTracker = new UsageTracker(context.globalState);
+        const providerManager = new ProviderManager(context.globalState, secretManager);
+
+        const activeProvider = providerManager.getActiveProvider();
         const chatController = new ChatController({
             secretManager,
             usageTracker,
-            initialProvider: PROVIDERS.GEMINI
+            providerManager,
+            initialProvider: activeProvider || null
         });
 
         // Initialize and register the Sidebar Webview View Provider
         const sidebarProvider = new FreeCodeSidebarProvider(context.extensionUri, {
             chatController,
             secretManager,
-            usageTracker
+            usageTracker,
+            providerManager
         });
 
         context.subscriptions.push(
@@ -75,7 +81,7 @@ function activate(context) {
                         else if (selected.includes("OpenRouter")) providerKey = PROVIDERS.OPENROUTER;
                         else if (selected.includes("Ollama")) providerKey = PROVIDERS.OLLAMA;
 
-                        chatController.setProvider(providerKey);
+                        await chatController.setProvider(providerKey);
 
                         vscode.window.showInformationMessage(
                             `Selected provider: ${selected}`
@@ -86,6 +92,10 @@ function activate(context) {
                         sidebarProvider.postMessage({
                             type: 'stateUpdated',
                             state: await chatController.getState()
+                        });
+                        sidebarProvider.postMessage({
+                            type: 'providersListUpdated',
+                            providers: await providerManager.getAllProviderStatuses()
                         });
                     }
                 }
@@ -121,6 +131,62 @@ function activate(context) {
                         vscode.window.showInformationMessage(
                             `API key for ${PROVIDER_METADATA[providerId]?.name || providerId} saved securely in SecretStorage.`
                         );
+
+                        sidebarProvider.postMessage({
+                            type: 'providersListUpdated',
+                            providers: await providerManager.getAllProviderStatuses()
+                        });
+                    }
+                }
+            )
+        );
+
+        // Command: Delete Provider Configuration
+        context.subscriptions.push(
+            vscode.commands.registerCommand(
+                "freecodeAI.deleteProvider",
+                async (targetProvider) => {
+                    let providerId = targetProvider;
+                    if (!providerId) {
+                        const configured = await providerManager.getConfiguredProviders();
+                        if (configured.length === 0) {
+                            vscode.window.showInformationMessage("No configured providers found to delete.");
+                            return;
+                        }
+                        const choices = configured.map(id => ({
+                            label: PROVIDER_METADATA[id]?.name || id,
+                            id
+                        }));
+                        const picked = await vscode.window.showQuickPick(choices, {
+                            placeHolder: "Select a provider to delete"
+                        });
+                        if (!picked) return;
+                        providerId = picked.id;
+                    }
+
+                    const name = PROVIDER_METADATA[providerId]?.name || providerId;
+                    const confirm = await vscode.window.showWarningMessage(
+                        `Are you sure you want to delete credentials and settings for ${name}?`,
+                        { modal: true },
+                        "Delete",
+                        "Cancel"
+                    );
+
+                    if (confirm === "Delete") {
+                        await secretManager.deleteApiKey(providerId);
+                        await providerManager.removeProvider(providerId);
+                        if (chatController.activeProvider === providerId) {
+                            await chatController.setProvider(providerManager.getActiveProvider() || null);
+                        }
+                        vscode.window.showInformationMessage(`Deleted credentials for ${name}.`);
+                        sidebarProvider.postMessage({
+                            type: 'providersListUpdated',
+                            providers: await providerManager.getAllProviderStatuses()
+                        });
+                        sidebarProvider.postMessage({
+                            type: 'stateUpdated',
+                            state: await chatController.getState()
+                        });
                     }
                 }
             )

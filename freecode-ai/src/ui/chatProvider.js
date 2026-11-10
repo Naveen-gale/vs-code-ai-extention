@@ -1,6 +1,7 @@
 /**
  * Chat Webview Provider & Message Bridge.
- * Connects the Webview UI to ChatController, SecretManager, ModelDiscovery, and UsageTracker.
+ * Connects the Webview UI to ChatController, ProviderManager, SecretManager,
+ * ModelDiscovery, and UsageTracker.
  */
 
 const vscode = require('vscode');
@@ -8,7 +9,6 @@ const fs = require('fs');
 const path = require('path');
 const { PROVIDERS, PROVIDER_METADATA } = require('../config/providers');
 const { ModelDiscovery } = require('../providers/modelDiscovery');
-const { getDefaultModels } = require('../config/modelRegistry');
 
 class ChatProvider {
   /**
@@ -17,12 +17,14 @@ class ChatProvider {
    * @param {import('../chat/chatController').ChatController} options.chatController
    * @param {import('../security/secretManager').SecretManager} options.secretManager
    * @param {import('../usage/usageTracker').UsageTracker} options.usageTracker
+   * @param {import('../providers/providerManager').ProviderManager} [options.providerManager]
    */
-  constructor({ extensionUri, chatController, secretManager, usageTracker }) {
+  constructor({ extensionUri, chatController, secretManager, usageTracker, providerManager = null }) {
     this.extensionUri = extensionUri;
     this.chatController = chatController;
     this.secretManager = secretManager;
     this.usageTracker = usageTracker;
+    this.providerManager = providerManager;
     this._view = null;
   }
 
@@ -75,9 +77,12 @@ class ChatProvider {
    * Handle incoming messages from the Webview.
    */
   async handleMessage(message) {
+    if (!message || !message.command) return;
+
     switch (message.command) {
       case 'webviewReady':
         await this.sendInitialState();
+        await this.sendProvidersList();
         break;
 
       case 'sendMessage':
@@ -90,26 +95,51 @@ class ChatProvider {
         this.postMessage({ type: 'chatCleared' });
         break;
 
+      case 'getProvidersList':
+        await this.sendProvidersList();
+        break;
+
+      case 'switchProvider':
+        await this.handleSwitchProvider(message.provider);
+        break;
+
+      // Legacy trigger
       case 'providerSelected':
-        await this.handleProviderSelected(message.provider);
+        await this.handleSwitchProvider(message.provider);
         break;
 
       case 'saveApiKey':
-        await this.handleSaveApiKey(message.provider, message.apiKey);
+        await this.handleSaveApiKey(message.provider, message.apiKey, {
+          activate: message.activate,
+          model: message.model
+        });
         break;
 
       case 'saveEndpoint':
-        if (this.chatController) this.chatController.setOllamaEndpoint(message.endpoint);
-        this.postMessage({
-          type: 'connectionResult',
-          success: true,
-          message: `Ollama endpoint updated to: ${message.endpoint}`
+        await this.handleSaveEndpoint(message.endpoint, {
+          activate: message.activate,
+          model: message.model
         });
-        await this.handleProviderSelected('ollama');
         break;
 
       case 'testConnection':
         await this.handleTestConnection(message.provider, message.endpoint);
+        break;
+
+      case 'saveAndTestConnection':
+        if (message.provider === PROVIDERS.OLLAMA) {
+          if (message.endpoint) {
+            await this.handleSaveEndpoint(message.endpoint, { activate: false });
+          }
+        } else if (message.apiKey) {
+          await this.handleSaveApiKey(message.provider, message.apiKey, { activate: false });
+        }
+        await this.handleTestConnection(message.provider, message.endpoint);
+        await this.handleFetchModels(message.provider);
+        break;
+
+      case 'removeProvider':
+        await this.handleRemoveProvider(message.provider);
         break;
 
       case 'fetchModels':
@@ -117,8 +147,9 @@ class ChatProvider {
         break;
 
       case 'selectModel':
-        if (this.chatController) this.chatController.setModel(message.model);
-        await this.sendStateUpdate();
+        await this.handleSelectModel(message.provider, message.model, {
+          activate: message.activate
+        });
         break;
 
       case 'getDashboardData':
@@ -143,13 +174,22 @@ class ChatProvider {
         break;
 
       default:
-        console.warn(`FreeCode AI: Unknown message: ${message.command}`);
+        console.warn(`FreeCode AI: Unknown webview command: ${message.command}`);
     }
   }
 
   async sendInitialState() {
-    const state = this.chatController ? await this.chatController.getState() : { provider: 'gemini', model: 'gemini-1.5-flash' };
-    const models = await this.getModelsForProvider(state.provider);
+    if (this.providerManager) {
+      const validActive = await this.providerManager.getValidatedActiveProvider();
+      if (this.chatController) {
+        await this.chatController.setProvider(validActive);
+      }
+    }
+
+    const state = this.chatController
+      ? await this.chatController.getState()
+      : { provider: null, providerName: 'No Provider Configured', model: null };
+    const models = state.provider ? await this.getModelsForProvider(state.provider) : [];
 
     this.postMessage({
       type: 'init',
@@ -158,6 +198,20 @@ class ChatProvider {
         messages: this.chatController ? this.chatController.getMessages() : [],
         models
       }
+    });
+  }
+
+  async sendProvidersList() {
+    if (!this.providerManager) return;
+    const validActive = await this.providerManager.getValidatedActiveProvider();
+    if (this.chatController && this.chatController.activeProvider !== validActive) {
+      await this.chatController.setProvider(validActive);
+    }
+    const providerStatuses = await this.providerManager.getAllProviderStatuses();
+    this.postMessage({
+      type: 'providersListUpdated',
+      providers: providerStatuses,
+      activeProvider: this.chatController ? this.chatController.activeProvider : null
     });
   }
 
@@ -172,9 +226,14 @@ class ChatProvider {
 
   async getModelsForProvider(providerId) {
     const apiKey = this.secretManager ? await this.secretManager.getApiKey(providerId) : null;
+    let endpoint = this.chatController ? this.chatController.ollamaEndpoint : 'http://127.0.0.1:11434';
+    if (providerId === PROVIDERS.OLLAMA && this.providerManager) {
+      const cfg = await this.providerManager.getProviderConfiguration(PROVIDERS.OLLAMA);
+      if (cfg && cfg.endpoint) endpoint = cfg.endpoint;
+    }
     return await ModelDiscovery.fetchModels(providerId, {
       apiKey,
-      endpoint: this.chatController ? this.chatController.ollamaEndpoint : 'http://127.0.0.1:11434'
+      endpoint
     });
   }
 
@@ -223,9 +282,10 @@ class ChatProvider {
     }
   }
 
-  async handleProviderSelected(providerId) {
+  async handleSwitchProvider(providerId) {
+    if (!providerId) return;
     if (this.chatController) {
-      this.chatController.setProvider(providerId);
+      await this.chatController.setProvider(providerId);
     }
     const models = await this.getModelsForProvider(providerId);
 
@@ -237,20 +297,97 @@ class ChatProvider {
     });
 
     await this.sendStateUpdate();
+    await this.sendProvidersList();
   }
 
-  async handleSaveApiKey(providerId, apiKey) {
+  async handleSaveApiKey(providerId, apiKey, options = {}) {
     if (this.secretManager) {
       await this.secretManager.storeApiKey(providerId, apiKey);
     }
+    if (this.providerManager) {
+      const updateData = { connectionState: 'configured' };
+      if (options.model) {
+        updateData.model = options.model;
+      }
+      await this.providerManager.setProviderConfiguration(providerId, updateData);
+    }
+
+    const shouldActivate = options.activate === true || (options.activate === undefined && (!this.providerManager || !this.providerManager.getActiveProvider()));
+
+    if (shouldActivate) {
+      if (this.providerManager) {
+        await this.providerManager.setActiveProvider(providerId);
+      }
+      if (this.chatController) {
+        await this.chatController.setProvider(providerId);
+        if (options.model) {
+          await this.chatController.setModel(options.model);
+        }
+      }
+    } else {
+      if (options.model && this.chatController && this.chatController.activeProvider === providerId) {
+        await this.chatController.setModel(options.model);
+      }
+    }
+
     this.postMessage({
       type: 'connectionResult',
+      provider: providerId,
       success: true,
-      message: `API Key securely saved for ${PROVIDER_METADATA[providerId]?.name || providerId}.`
+      message: shouldActivate
+        ? `API Key saved and ${PROVIDER_METADATA[providerId]?.name || providerId} set as active.`
+        : `API Key saved for ${PROVIDER_METADATA[providerId]?.name || providerId}.`
     });
 
-    // Automatically refresh models after saving key
+    // Automatically refresh models and cards
     await this.handleFetchModels(providerId);
+    await this.sendProvidersList();
+    await this.sendStateUpdate();
+  }
+
+  async handleSaveEndpoint(endpoint, options = {}) {
+    if (this.providerManager) {
+      const updateData = { endpoint, connectionState: 'configured' };
+      if (options.model) {
+        updateData.model = options.model;
+      }
+      await this.providerManager.setProviderConfiguration(PROVIDERS.OLLAMA, updateData);
+    }
+
+    const shouldActivate = options.activate === true || (options.activate === undefined && (!this.providerManager || !this.providerManager.getActiveProvider()));
+
+    if (shouldActivate) {
+      if (this.chatController) {
+        await this.chatController.setOllamaEndpoint(endpoint);
+        await this.chatController.setProvider(PROVIDERS.OLLAMA);
+        if (options.model) {
+          await this.chatController.setModel(options.model);
+        }
+      }
+      if (this.providerManager) {
+        await this.providerManager.setActiveProvider(PROVIDERS.OLLAMA);
+      }
+    } else {
+      if (this.chatController && this.chatController.activeProvider === PROVIDERS.OLLAMA) {
+        await this.chatController.setOllamaEndpoint(endpoint);
+        if (options.model) {
+          await this.chatController.setModel(options.model);
+        }
+      }
+    }
+
+    this.postMessage({
+      type: 'connectionResult',
+      provider: PROVIDERS.OLLAMA,
+      success: true,
+      message: shouldActivate
+        ? `Ollama endpoint updated and set as active.`
+        : `Ollama endpoint updated to: ${endpoint}`
+    });
+
+    await this.handleFetchModels(PROVIDERS.OLLAMA);
+    await this.sendProvidersList();
+    await this.sendStateUpdate();
   }
 
   async handleTestConnection(providerId, customEndpoint) {
@@ -262,44 +399,133 @@ class ChatProvider {
       if (!apiKey) {
         this.postMessage({
           type: 'connectionResult',
+          provider: providerId,
           success: false,
-          message: `API key not found for ${meta.name}. Please enter and save your key first.`
+          message: `API key not found for ${meta.name}. Please configure your API key first.`
         });
+        if (this.providerManager) {
+          this.providerManager.setConnectionState(providerId, 'error');
+          await this.sendProvidersList();
+        }
         return;
       }
     }
 
     try {
       const { ProviderFactory } = require('../providers/providerFactory');
-      const endpoint = customEndpoint || (this.chatController ? this.chatController.ollamaEndpoint : 'http://127.0.0.1:11434');
+      let endpoint = customEndpoint || (this.chatController ? this.chatController.ollamaEndpoint : 'http://127.0.0.1:11434');
+      if (providerId === PROVIDERS.OLLAMA && this.providerManager && !customEndpoint) {
+        const cfg = await this.providerManager.getProviderConfiguration(PROVIDERS.OLLAMA);
+        if (cfg.endpoint) endpoint = cfg.endpoint;
+      }
+
       const providerInstance = ProviderFactory.create(providerId, {
         apiKey,
         endpoint
       });
 
       const res = await providerInstance.testConnection();
+
+      if (this.providerManager) {
+        this.providerManager.setConnectionState(providerId, res.success ? 'connected' : 'error');
+      }
+
       this.postMessage({
         type: 'connectionResult',
+        provider: providerId,
         success: res.success,
         message: res.message
       });
+
+      await this.sendProvidersList();
     } catch (err) {
+      if (this.providerManager) {
+        this.providerManager.setConnectionState(providerId, 'error');
+      }
       this.postMessage({
         type: 'connectionResult',
+        provider: providerId,
         success: false,
-        message: err.message || 'Connection failed'
+        message: err.message || 'Connection test failed.'
       });
+      await this.sendProvidersList();
     }
+  }
+
+  async handleRemoveProvider(providerId) {
+    if (!providerId) return;
+
+    if (this.secretManager) {
+      await this.secretManager.deleteApiKey(providerId);
+    }
+    if (this.providerManager) {
+      await this.providerManager.removeProvider(providerId);
+    }
+
+    if (this.chatController && this.chatController.activeProvider === providerId) {
+      const newActive = this.providerManager ? this.providerManager.getActiveProvider() : null;
+      await this.chatController.setProvider(newActive);
+    }
+
+    this.postMessage({
+      type: 'connectionResult',
+      provider: providerId,
+      success: true,
+      message: `Configuration removed for ${PROVIDER_METADATA[providerId]?.name || providerId}.`
+    });
+
+    await this.sendProvidersList();
+    await this.sendStateUpdate();
   }
 
   async handleFetchModels(providerId) {
     const models = await this.getModelsForProvider(providerId);
+    let activeModel = null;
+    if (this.providerManager) {
+      const cfg = await this.providerManager.getProviderConfiguration(providerId);
+      activeModel = cfg.model;
+    }
+    if (!activeModel && this.chatController && this.chatController.activeProvider === providerId) {
+      activeModel = this.chatController.activeModel;
+    }
+
     this.postMessage({
       type: 'modelsUpdated',
       provider: providerId,
       models,
-      activeModel: this.chatController ? this.chatController.activeModel : null
+      activeModel
     });
+  }
+
+  async handleSelectModel(providerId, modelId, options = {}) {
+    const targetProvider = providerId || (this.chatController ? this.chatController.activeProvider : null);
+    if (!targetProvider) return;
+
+    if (this.providerManager) {
+      await this.providerManager.setProviderConfiguration(targetProvider, { model: modelId });
+    }
+
+    if (options.activate) {
+      if (this.providerManager) {
+        await this.providerManager.setActiveProvider(targetProvider);
+      }
+      if (this.chatController) {
+        await this.chatController.setProvider(targetProvider);
+        await this.chatController.setModel(modelId);
+      }
+    } else if (this.chatController && this.chatController.activeProvider === targetProvider) {
+      await this.chatController.setModel(modelId);
+    }
+
+    this.postMessage({
+      type: 'connectionResult',
+      provider: targetProvider,
+      success: true,
+      message: `Selected model set to ${modelId} for ${PROVIDER_METADATA[targetProvider]?.name || targetProvider}.`
+    });
+
+    await this.sendProvidersList();
+    await this.sendStateUpdate();
   }
 
   sendDashboardData(providerFilter) {

@@ -13,12 +13,14 @@ class FreeCodeSidebarProvider {
    * @param {import('../chat/chatController').ChatController} [dependencies.chatController]
    * @param {import('../security/secretManager').SecretManager} [dependencies.secretManager]
    * @param {import('../usage/usageTracker').UsageTracker} [dependencies.usageTracker]
+   * @param {import('../providers/providerManager').ProviderManager} [dependencies.providerManager]
    */
   constructor(extensionUri, dependencies = {}) {
     this.extensionUri = extensionUri;
     this.chatController = dependencies.chatController;
     this.secretManager = dependencies.secretManager;
     this.usageTracker = dependencies.usageTracker;
+    this.providerManager = dependencies.providerManager;
     this._view = null;
     this.chatProvider = null;
   }
@@ -31,7 +33,8 @@ class FreeCodeSidebarProvider {
       extensionUri: this.extensionUri,
       chatController: this.chatController,
       secretManager: this.secretManager,
-      usageTracker: this.usageTracker
+      usageTracker: this.usageTracker,
+      providerManager: this.providerManager
     });
 
     this.chatProvider.attachWebview(webviewView);

@@ -1,6 +1,6 @@
 /**
  * Secure API Key Storage using VS Code SecretStorage.
- * Ensures API keys are securely stored and never leaked to Webview JavaScript.
+ * Ensures API keys are securely stored independently per provider and never leaked to Webview JavaScript.
  */
 
 class SecretManager {
@@ -13,11 +13,11 @@ class SecretManager {
   }
 
   _getKeyName(providerId) {
-    return `freecode-ai.apiKey.${providerId.toLowerCase()}`;
+    return `freecode-ai.apiKey.${(providerId || '').toLowerCase()}`;
   }
 
   /**
-   * Store an API key securely.
+   * Store an API key securely for a specific provider.
    * @param {string} providerId
    * @param {string} apiKey
    * @returns {Promise<void>}
@@ -35,7 +35,17 @@ class SecretManager {
   }
 
   /**
-   * Retrieve an API key securely.
+   * Alias for storeApiKey to satisfy API requirements.
+   * @param {string} providerId
+   * @param {string} apiKey
+   * @returns {Promise<void>}
+   */
+  async saveApiKey(providerId, apiKey) {
+    return this.storeApiKey(providerId, apiKey);
+  }
+
+  /**
+   * Retrieve an API key securely for a specific provider.
    * @param {string} providerId
    * @returns {Promise<string|null>}
    */
@@ -52,7 +62,7 @@ class SecretManager {
   }
 
   /**
-   * Delete an API key from secure storage.
+   * Delete an API key from secure storage for a specific provider.
    * @param {string} providerId
    * @returns {Promise<void>}
    */
@@ -79,7 +89,8 @@ class SecretManager {
 
   /**
    * Get a masked representation of the key for safe UI status indicators.
-   * Never returns the real key.
+   * Never returns the real key or exposes sensitive middle bytes.
+   * e.g. "••••••••1234"
    * @param {string} providerId
    * @returns {Promise<string>}
    */

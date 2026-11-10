@@ -14,24 +14,47 @@
   const clearChatBtn = document.getElementById('btn-clear-chat');
   const typingIndicator = document.getElementById('typing-indicator');
   const pillProvider = document.getElementById('pill-provider');
+  const pillSeparator = document.getElementById('pill-separator');
   const pillModel = document.getElementById('pill-model');
   const activeModelPill = document.getElementById('active-model-pill');
   const quickPromptButtons = document.querySelectorAll('.quick-prompt-btn');
 
-  // DOM Elements - Settings
-  const providerSelect = document.getElementById('provider-select');
-  const groupApiKey = document.getElementById('group-api-key');
-  const apiKeyInput = document.getElementById('api-key-input');
-  const groupEndpoint = document.getElementById('group-endpoint');
-  const endpointInput = document.getElementById('endpoint-input');
-  const saveKeyBtn = document.getElementById('btn-save-key');
-  const testConnectionBtn = document.getElementById('btn-test-connection');
-  const connectionStatus = document.getElementById('connection-status');
-  const modelSelect = document.getElementById('model-select');
-  const modelDescription = document.getElementById('model-description');
-  const refreshModelsBtn = document.getElementById('btn-refresh-models');
-  const applyModelBtn = document.getElementById('btn-apply-model');
-  const apiKeyLink = document.getElementById('api-key-link');
+  // DOM Elements - Provider Dashboard
+  const providersCardsList = document.getElementById('providers-cards-list');
+  const btnAddProvider = document.getElementById('btn-add-provider');
+  const globalProviderAlert = document.getElementById('global-provider-alert');
+
+  // DOM Elements - Manage Modal
+  const manageModal = document.getElementById('manage-modal');
+  const modalProviderTitle = document.getElementById('modal-provider-title');
+  const modalProviderDropdown = document.getElementById('modal-provider-dropdown');
+  const btnCloseModal = document.getElementById('btn-close-modal');
+  const modalStatusAlert = document.getElementById('modal-status-alert');
+  const modalGroupKey = document.getElementById('modal-group-key');
+  const modalApiKeyInput = document.getElementById('modal-api-key-input');
+  const modalMaskedKey = document.getElementById('modal-masked-key');
+  const modalApiKeyLink = document.getElementById('modal-api-key-link');
+  const modalGroupEndpoint = document.getElementById('modal-group-endpoint');
+  const modalEndpointInput = document.getElementById('modal-endpoint-input');
+  const modalBtnSaveTestConn = document.getElementById('modal-btn-save-test-conn');
+  const modalBtnSelectModel = document.getElementById('modal-btn-select-model');
+  const modalBtnTestConn = document.getElementById('modal-btn-test-conn');
+  const modalModelSelect = document.getElementById('modal-model-select');
+  const modalModelDesc = document.getElementById('modal-model-desc');
+  const modalBtnRefreshModels = document.getElementById('modal-btn-refresh-models');
+  const modalBtnSaveOnly = document.getElementById('modal-btn-save-only');
+  const modalBtnSaveSelectModel = document.getElementById('modal-btn-save-select-model');
+  const modalBtnSaveKey = document.getElementById('modal-btn-save-key');
+  const modalBtnApplyModel = document.getElementById('modal-btn-apply-model');
+  const modalBtnRemove = document.getElementById('modal-btn-remove');
+  const modalBtnUseNow = document.getElementById('modal-btn-use-now');
+
+  // DOM Elements - Delete Confirmation Modal
+  const confirmModal = document.getElementById('confirm-modal');
+  const confirmModalTitle = document.getElementById('confirm-modal-title');
+  const confirmModalMsg = document.getElementById('confirm-modal-msg');
+  const btnCancelDelete = document.getElementById('btn-cancel-delete');
+  const btnExecuteDelete = document.getElementById('btn-execute-delete');
 
   // DOM Elements - Dashboard
   const dashProviderSelect = document.getElementById('dashboard-provider-select');
@@ -49,10 +72,35 @@
   const resetUsageBtn = document.getElementById('btn-reset-usage');
 
   // State
-  let currentProvider = 'gemini';
-  let currentModel = 'gemini-1.5-flash';
-  let availableModels = [];
-  let dashboardStats = null;
+  let currentActiveProvider = null;
+  let currentActiveModel = null;
+  let modalTargetProvider = null;
+  let cachedProvidersList = [];
+  let modalModels = [];
+
+  function updateHeaderPill(provider, model, providerName) {
+    if (!activeModelPill) return;
+    if (!provider) {
+      activeModelPill.classList.add('unconfigured');
+      if (pillProvider) pillProvider.textContent = 'No Provider Configured';
+      if (pillSeparator) pillSeparator.style.display = 'none';
+      if (pillModel) {
+        pillModel.textContent = '';
+        pillModel.style.display = 'none';
+      }
+      activeModelPill.title = 'No active AI provider. Click to add or configure a provider.';
+    } else {
+      activeModelPill.classList.remove('unconfigured');
+      const dispName = providerName || provider.toUpperCase();
+      if (pillProvider) pillProvider.textContent = dispName;
+      if (pillSeparator) pillSeparator.style.display = 'inline';
+      if (pillModel) {
+        pillModel.textContent = model || 'Default';
+        pillModel.style.display = 'inline';
+      }
+      activeModelPill.title = `Active: ${dispName} (${model || 'Default'}). Click to switch or configure.`;
+    }
+  }
 
   const providerLinks = {
     gemini: 'https://aistudio.google.com/app/apikey',
@@ -72,6 +120,10 @@
 
     if (tabId === 'dashboard') {
       requestDashboardData();
+    } else if (tabId === 'settings') {
+      if (vscode) {
+        vscode.postMessage({ command: 'getProvidersList' });
+      }
     }
   }
 
@@ -176,125 +228,488 @@
     });
   });
 
-  // 3. Provider Settings Logic
-  function updateProviderUI(providerId) {
-    currentProvider = providerId;
-    const isOllama = providerId === 'ollama';
+  // 3. Multi-Provider Persistent Dashboard Logic
 
-    groupApiKey.style.display = isOllama ? 'none' : 'flex';
-    groupEndpoint.style.display = isOllama ? 'flex' : 'none';
+  function renderProvidersCards(providers) {
+    cachedProvidersList = providers || [];
+    providersCardsList.innerHTML = '';
 
-    if (apiKeyLink) {
-      apiKeyLink.href = providerLinks[providerId] || '#';
-      apiKeyLink.style.display = isOllama ? 'none' : 'inline';
+    const configuredList = cachedProvidersList.filter(p => p.isConfigured);
+
+    if (configuredList.length === 0) {
+      // Sync chat header: no providers exist, clear header pill
+      currentActiveProvider = null;
+      currentActiveModel = null;
+      updateHeaderPill(null, null, null);
+
+      providersCardsList.innerHTML = `
+        <div class="empty-providers-box">
+          <div style="font-size: 28px; margin-bottom: 6px;">⚙️</div>
+          <h4>No AI Providers Configured</h4>
+          <p>You have deleted or haven't configured any AI providers yet.</p>
+          <button id="btn-empty-add-provider" class="primary-btn" style="width: auto; padding: 7px 18px; margin: 0 auto; display: inline-flex; align-items: center; gap: 6px;">
+            + Add / Set Up Provider
+          </button>
+        </div>
+      `;
+      const btnEmpty = document.getElementById('btn-empty-add-provider');
+      if (btnEmpty) {
+        btnEmpty.addEventListener('click', () => {
+          openManageModal(null);
+        });
+      }
+      return;
     }
 
+    // Sync active provider from configured list
+    const activeProv = configuredList.find(p => p.isActive);
+    if (activeProv) {
+      currentActiveProvider = activeProv.id;
+      currentActiveModel = activeProv.selectedModel;
+      updateHeaderPill(activeProv.id, activeProv.selectedModel, activeProv.name);
+    } else {
+      currentActiveProvider = null;
+      currentActiveModel = null;
+      updateHeaderPill(null, null, null);
+    }
+
+    configuredList.forEach(p => {
+      const isAct = p.isActive;
+      const card = document.createElement('div');
+      card.className = `provider-card ${isAct ? 'active-card' : ''}`;
+
+      // Header
+      const header = document.createElement('div');
+      header.className = 'provider-card-header';
+      header.innerHTML = `
+        <div class="provider-card-title">
+          <span>${p.name.toUpperCase()}</span>
+          ${isAct ? '<span class="active-tag">Active</span>' : ''}
+        </div>
+        <span class="badge-status ${p.isConfigured ? 'configured' : 'unconfigured'}">
+          ${p.status}
+        </span>
+      `;
+      card.appendChild(header);
+
+      // Body Details
+      const details = document.createElement('div');
+      details.className = 'provider-card-details';
+
+      let connBadge = '';
+      if (p.connectionStatus === 'connected') {
+        connBadge = '<span class="badge-status connected">Connected</span>';
+      } else if (p.connectionStatus === 'error') {
+        connBadge = '<span class="badge-status error">Error</span>';
+      } else if (p.connectionStatus === 'configured') {
+        connBadge = '<span style="color:var(--vscode-descriptionForeground)">Configured</span>';
+      } else {
+        connBadge = '<span style="color:var(--vscode-descriptionForeground)">Not configured</span>';
+      }
+
+      details.innerHTML = `
+        <div class="detail-line">
+          <span class="detail-label">Status:</span>
+          <span>${p.status} (${connBadge})</span>
+        </div>
+        <div class="detail-line">
+          <span class="detail-label">${p.requiresApiKey ? 'API Key:' : 'Endpoint:'}</span>
+          <span class="detail-val">${p.requiresApiKey ? (p.maskedKey || 'Not configured') : (p.endpoint || 'Default local')}</span>
+        </div>
+        <div class="detail-line">
+          <span class="detail-label">Model:</span>
+          <span class="detail-val" style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${p.selectedModel || 'Default'}</span>
+        </div>
+      `;
+      card.appendChild(details);
+
+      // Action Buttons
+      const actions = document.createElement('div');
+      actions.className = 'provider-card-actions';
+
+      if (isAct) {
+        const actBtn = document.createElement('button');
+        actBtn.className = 'card-btn active-btn';
+        actBtn.textContent = '✓ In Use';
+        actions.appendChild(actBtn);
+      } else {
+        const useBtn = document.createElement('button');
+        useBtn.className = 'card-btn use-btn';
+        useBtn.textContent = 'Use Provider';
+        useBtn.title = `Switch active provider to ${p.name}`;
+        useBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          switchActiveProvider(p.id);
+        });
+        actions.appendChild(useBtn);
+      }
+
+      const manageBtn = document.createElement('button');
+      manageBtn.className = 'card-btn manage-btn';
+      manageBtn.textContent = 'Manage';
+      manageBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openManageModal(p.id);
+      });
+      actions.appendChild(manageBtn);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'card-btn remove-icon-btn';
+      removeBtn.innerHTML = '🗑️ Delete';
+      removeBtn.title = `Delete credentials and configuration for ${p.name}`;
+      removeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showDeleteConfirmation(p.id, p.name);
+      });
+      actions.appendChild(removeBtn);
+
+      card.appendChild(actions);
+      providersCardsList.appendChild(card);
+    });
+  }
+
+  function switchActiveProvider(providerId) {
     if (vscode) {
       vscode.postMessage({
-        command: 'providerSelected',
+        command: 'switchProvider',
         provider: providerId
       });
     }
+    showGlobalAlert(`Switched active provider to ${providerId.toUpperCase()}.`, 'info');
   }
 
-  providerSelect.addEventListener('change', () => {
-    updateProviderUI(providerSelect.value);
-  });
+  let pendingDeleteProviderId = null;
 
-  saveKeyBtn.addEventListener('click', () => {
-    if (currentProvider === 'ollama') {
-      const endpoint = endpointInput.value.trim();
+  function showDeleteConfirmation(providerId, providerName) {
+    pendingDeleteProviderId = providerId;
+    if (confirmModalTitle) {
+      confirmModalTitle.textContent = `Delete ${providerName}?`;
+    }
+    if (confirmModalMsg) {
+      confirmModalMsg.textContent = `Are you sure you want to remove credentials and settings for ${providerName}? Other saved providers will remain untouched.`;
+    }
+    if (confirmModal) {
+      confirmModal.style.display = 'flex';
+    }
+  }
+
+  function hideDeleteConfirmation() {
+    pendingDeleteProviderId = null;
+    if (confirmModal) {
+      confirmModal.style.display = 'none';
+    }
+  }
+
+  if (btnCancelDelete) {
+    btnCancelDelete.addEventListener('click', hideDeleteConfirmation);
+  }
+
+  if (confirmModal) {
+    confirmModal.addEventListener('click', (e) => {
+      if (e.target === confirmModal) hideDeleteConfirmation();
+    });
+  }
+
+  if (btnExecuteDelete) {
+    btnExecuteDelete.addEventListener('click', () => {
+      if (!pendingDeleteProviderId) return;
+      const provId = pendingDeleteProviderId;
+      hideDeleteConfirmation();
+      closeManageModal();
       if (vscode) {
         vscode.postMessage({
-          command: 'saveEndpoint',
+          command: 'removeProvider',
+          provider: provId
+        });
+      }
+      showGlobalAlert(`Deleting configuration for ${provId.toUpperCase()}...`, 'info');
+    });
+  }
+
+  btnAddProvider.addEventListener('click', () => {
+    openManageModal(null);
+  });
+
+  // 4. Manage Modal Logic
+  function openManageModal(providerId) {
+    if (!providerId) {
+      // Find first unconfigured provider or default to gemini
+      const unconfigured = cachedProvidersList.find(p => !p.isConfigured);
+      providerId = unconfigured ? unconfigured.id : 'gemini';
+    }
+
+    modalTargetProvider = providerId;
+    if (modalProviderDropdown) {
+      modalProviderDropdown.value = providerId;
+    }
+
+    const providerInfo = cachedProvidersList.find(p => p.id === providerId) || {
+      id: providerId,
+      name: providerId.toUpperCase(),
+      requiresApiKey: providerId !== 'ollama',
+      maskedKey: 'Not configured',
+      endpoint: 'http://127.0.0.1:11434'
+    };
+
+    modalProviderTitle.textContent = `Configure ${providerInfo.name}`;
+    modalStatusAlert.style.display = 'none';
+    modalApiKeyInput.value = '';
+
+    const isOllama = providerId === 'ollama';
+    modalGroupKey.style.display = isOllama ? 'none' : 'flex';
+    modalGroupEndpoint.style.display = isOllama ? 'flex' : 'none';
+
+    modalMaskedKey.textContent = providerInfo.maskedKey || 'Not configured';
+
+    if (modalApiKeyLink) {
+      modalApiKeyLink.href = providerLinks[providerId] || '#';
+      modalApiKeyLink.style.display = isOllama ? 'none' : 'inline';
+    }
+
+    if (isOllama && modalEndpointInput) {
+      modalEndpointInput.value = providerInfo.endpoint || 'http://127.0.0.1:11434';
+    }
+
+    // Request available models for this provider
+    if (vscode) {
+      vscode.postMessage({
+        command: 'fetchModels',
+        provider: providerId
+      });
+    }
+
+    manageModal.style.display = 'flex';
+  }
+
+  if (modalProviderDropdown) {
+    modalProviderDropdown.addEventListener('change', () => {
+      openManageModal(modalProviderDropdown.value);
+    });
+  }
+
+  function closeManageModal() {
+    manageModal.style.display = 'none';
+    modalTargetProvider = null;
+  }
+
+  btnCloseModal.addEventListener('click', closeManageModal);
+  manageModal.addEventListener('click', (e) => {
+    if (e.target === manageModal) closeManageModal();
+  });
+
+  function handleSaveAndTestConnection() {
+    if (!modalTargetProvider) return;
+
+    const providerInfo = cachedProvidersList.find(p => p.id === modalTargetProvider);
+
+    if (modalTargetProvider === 'ollama') {
+      const endpoint = (modalEndpointInput && modalEndpointInput.value.trim()) || 'http://127.0.0.1:11434';
+      showModalAlert('Saving endpoint & testing Ollama connection...', 'info');
+      if (vscode) {
+        vscode.postMessage({
+          command: 'saveAndTestConnection',
           provider: 'ollama',
           endpoint: endpoint
         });
       }
     } else {
-      const key = apiKeyInput.value.trim();
-      if (!key) {
-        showStatusAlert('Please enter a valid API key.', 'error');
+      const key = modalApiKeyInput ? modalApiKeyInput.value.trim() : '';
+      const isAlreadyConfigured = providerInfo && providerInfo.isConfigured;
+
+      if (!key && !isAlreadyConfigured) {
+        showModalAlert(`Please enter an API key for ${modalTargetProvider.toUpperCase()} before testing.`, 'error');
         return;
       }
+
+      showModalAlert(`Saving credentials & testing connection for ${modalTargetProvider.toUpperCase()}...`, 'info');
+
       if (vscode) {
         vscode.postMessage({
-          command: 'saveApiKey',
-          provider: currentProvider,
-          apiKey: key
+          command: 'saveAndTestConnection',
+          provider: modalTargetProvider,
+          apiKey: key || undefined
         });
       }
+      if (key && modalApiKeyInput) {
+        modalApiKeyInput.value = '';
+      }
     }
-  });
+  }
 
-  testConnectionBtn.addEventListener('click', () => {
-    showStatusAlert('Testing connection...', 'info');
-    if (vscode) {
-      vscode.postMessage({
-        command: 'testConnection',
-        provider: currentProvider,
-        endpoint: endpointInput.value.trim()
-      });
+  function handleSelectThisModel() {
+    if (!modalTargetProvider) return;
+
+    const providerInfo = cachedProvidersList.find(p => p.id === modalTargetProvider);
+    const selectedModel = modalModelSelect ? modalModelSelect.value : null;
+
+    if (!selectedModel) {
+      showModalAlert('Please select a model from the list.', 'error');
+      return;
     }
-  });
 
-  refreshModelsBtn.addEventListener('click', () => {
+    if (modalTargetProvider === 'ollama') {
+      const endpoint = (modalEndpointInput && modalEndpointInput.value.trim()) || 'http://127.0.0.1:11434';
+      if (vscode) {
+        vscode.postMessage({
+          command: 'saveEndpoint',
+          provider: 'ollama',
+          endpoint: endpoint,
+          model: selectedModel,
+          activate: true
+        });
+      }
+      showGlobalAlert(`Activated Ollama (${selectedModel}) for chat!`, 'success');
+      closeManageModal();
+      switchTab('chat');
+    } else {
+      const key = modalApiKeyInput ? modalApiKeyInput.value.trim() : '';
+      const isAlreadyConfigured = providerInfo && providerInfo.isConfigured;
+
+      if (!key && !isAlreadyConfigured) {
+        showModalAlert(`Please enter an API key for ${modalTargetProvider.toUpperCase()} first.`, 'error');
+        return;
+      }
+
+      if (key) {
+        if (vscode) {
+          vscode.postMessage({
+            command: 'saveApiKey',
+            provider: modalTargetProvider,
+            apiKey: key,
+            model: selectedModel,
+            activate: true
+          });
+        }
+        if (modalApiKeyInput) modalApiKeyInput.value = '';
+      } else {
+        if (vscode) {
+          vscode.postMessage({
+            command: 'selectModel',
+            provider: modalTargetProvider,
+            model: selectedModel,
+            activate: true
+          });
+          vscode.postMessage({
+            command: 'switchProvider',
+            provider: modalTargetProvider
+          });
+        }
+      }
+
+      showGlobalAlert(`Activated ${modalTargetProvider.toUpperCase()} (${selectedModel}) for chat!`, 'success');
+      closeManageModal();
+      switchTab('chat');
+    }
+  }
+
+  function handleSaveCredentials(activate) {
+    if (activate) {
+      handleSelectThisModel();
+    } else {
+      handleSaveAndTestConnection();
+    }
+  }
+
+  if (modalBtnSaveTestConn) {
+    modalBtnSaveTestConn.addEventListener('click', handleSaveAndTestConnection);
+  }
+
+  if (modalBtnSelectModel) {
+    modalBtnSelectModel.addEventListener('click', handleSelectThisModel);
+  }
+
+  // Compatibility bindings for legacy / alias buttons
+  if (modalBtnTestConn) {
+    modalBtnTestConn.addEventListener('click', handleSaveAndTestConnection);
+  }
+  if (modalBtnSaveOnly) {
+    modalBtnSaveOnly.addEventListener('click', handleSaveAndTestConnection);
+  }
+  if (modalBtnSaveSelectModel) {
+    modalBtnSaveSelectModel.addEventListener('click', handleSelectThisModel);
+  }
+  if (modalBtnSaveKey) {
+    modalBtnSaveKey.addEventListener('click', handleSaveAndTestConnection);
+  }
+  if (modalBtnApplyModel) {
+    modalBtnApplyModel.addEventListener('click', handleSelectThisModel);
+  }
+  if (modalBtnUseNow) {
+    modalBtnUseNow.addEventListener('click', handleSelectThisModel);
+  }
+
+  modalBtnRefreshModels.addEventListener('click', () => {
+    if (!modalTargetProvider) return;
     if (vscode) {
       vscode.postMessage({
         command: 'fetchModels',
-        provider: currentProvider
+        provider: modalTargetProvider
       });
     }
   });
 
-  applyModelBtn.addEventListener('click', () => {
-    const selectedModel = modelSelect.value;
-    if (selectedModel && vscode) {
-      vscode.postMessage({
-        command: 'selectModel',
-        model: selectedModel
-      });
-      showStatusAlert(`Active model changed to: ${selectedModel}`, 'success');
+  modalBtnRemove.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!modalTargetProvider) return;
+    const target = cachedProvidersList.find(p => p.id === modalTargetProvider);
+    const name = target ? target.name : modalTargetProvider.toUpperCase();
+    showDeleteConfirmation(modalTargetProvider, name);
+  });
+
+  if (modalBtnUseNow) {
+    modalBtnUseNow.addEventListener('click', () => {
+      if (!modalTargetProvider) return;
+      switchActiveProvider(modalTargetProvider);
+      closeManageModal();
       switchTab('chat');
-    }
-  });
+    });
+  }
 
-  function populateModels(models, activeModelId) {
-    availableModels = models || [];
-    modelSelect.innerHTML = '';
+  function populateModalModels(models, activeModelId) {
+    modalModels = models || [];
+    modalModelSelect.innerHTML = '';
 
-    availableModels.forEach(m => {
+    modalModels.forEach(m => {
       const opt = document.createElement('option');
       opt.value = m.id;
-      opt.textContent = `${m.name || m.id}${m.isFree ? ' (Free)' : ''}`;
+      opt.textContent = `${m.name || m.id}${m.isFree ? ' (Free Tier)' : ''}`;
       if (m.id === activeModelId) {
         opt.selected = true;
       }
-      modelSelect.appendChild(opt);
+      modalModelSelect.appendChild(opt);
     });
 
-    updateModelDescription();
+    updateModalModelDesc();
   }
 
-  function updateModelDescription() {
-    const selectedId = modelSelect.value;
-    const found = availableModels.find(m => m.id === selectedId);
+  function updateModalModelDesc() {
+    const selectedId = modalModelSelect.value;
+    const found = modalModels.find(m => m.id === selectedId);
     if (found && found.description) {
-      modelDescription.textContent = found.description;
+      modalModelDesc.textContent = found.description;
     } else {
-      modelDescription.textContent = '';
+      modalModelDesc.textContent = '';
     }
   }
 
-  modelSelect.addEventListener('change', updateModelDescription);
+  modalModelSelect.addEventListener('change', updateModalModelDesc);
 
-  function showStatusAlert(msg, type) {
-    connectionStatus.textContent = msg;
-    connectionStatus.className = `status-alert ${type}`;
-    connectionStatus.style.display = 'block';
+  function showModalAlert(msg, type) {
+    modalStatusAlert.textContent = msg;
+    modalStatusAlert.className = `status-alert ${type}`;
+    modalStatusAlert.style.display = 'block';
   }
 
-  // 4. Dashboard Logic
+  function showGlobalAlert(msg, type) {
+    globalProviderAlert.textContent = msg;
+    globalProviderAlert.className = `status-alert ${type}`;
+    globalProviderAlert.style.display = 'block';
+    setTimeout(() => {
+      globalProviderAlert.style.display = 'none';
+    }, 4000);
+  }
+
+  // 5. Dashboard Logic
   function requestDashboardData() {
     if (vscode) {
       vscode.postMessage({
@@ -311,14 +726,13 @@
     if (vscode) {
       vscode.postMessage({
         command: 'resetUsage',
-        provider: dashProviderSelect.value === 'current' ? currentProvider : dashProviderSelect.value
+        provider: dashProviderSelect.value === 'current' ? currentActiveProvider : dashProviderSelect.value
       });
     }
   });
 
   function renderDashboard(data) {
     if (!data) return;
-    dashboardStats = data;
 
     const stats = data.providerStats || {};
     const tokens = stats.tokens || { prompt: 0, completion: 0, total: 0, reported: 0, estimated: 0 };
@@ -362,33 +776,49 @@
     }
   }
 
-  // 5. Message listener from Extension Host
+  // 6. Message Listener from Extension Host
   window.addEventListener('message', (event) => {
     const msg = event.data;
     if (!msg) return;
 
     switch (msg.type) {
-      case 'init':
-        currentProvider = msg.state.provider;
-        currentModel = msg.state.model;
-        providerSelect.value = currentProvider;
-        updateProviderUI(currentProvider);
-
-        if (pillProvider) pillProvider.textContent = msg.state.providerName || currentProvider;
-        if (pillModel) pillModel.textContent = currentModel;
-
-        if (msg.state.ollamaEndpoint) {
-          endpointInput.value = msg.state.ollamaEndpoint;
+      case 'init': {
+        const isReady = Boolean(msg.state && msg.state.provider && msg.state.hasKey !== false);
+        if (isReady) {
+          currentActiveProvider = msg.state.provider;
+          currentActiveModel = msg.state.model;
+          updateHeaderPill(currentActiveProvider, currentActiveModel, msg.state.providerName);
+        } else {
+          currentActiveProvider = null;
+          currentActiveModel = null;
+          updateHeaderPill(null, null, null);
         }
 
-        populateModels(msg.state.models, currentModel);
-
-        if (Array.isArray(msg.state.messages) && msg.state.messages.length > 0) {
+        if (msg.state && Array.isArray(msg.state.messages) && msg.state.messages.length > 0) {
           if (emptyState) emptyState.style.display = 'none';
           messagesContainer.innerHTML = '';
           msg.state.messages.forEach(appendMessage);
         }
         break;
+      }
+
+      case 'providersListUpdated':
+        renderProvidersCards(msg.providers);
+        break;
+
+      case 'stateUpdated': {
+        const isReady = Boolean(msg.state && msg.state.provider && msg.state.hasKey !== false);
+        if (isReady) {
+          currentActiveProvider = msg.state.provider;
+          currentActiveModel = msg.state.model;
+          updateHeaderPill(currentActiveProvider, currentActiveModel, msg.state.providerName);
+        } else {
+          currentActiveProvider = null;
+          currentActiveModel = null;
+          updateHeaderPill(null, null, null);
+        }
+        break;
+      }
 
       case 'messageAdded':
         hideTyping();
@@ -410,25 +840,23 @@
         } else {
           hideTyping();
           if (msg.status === 'error') {
-            showStatusAlert(msg.message, 'error');
+            showGlobalAlert(msg.message, 'error');
           }
         }
         break;
 
       case 'connectionResult':
-        showStatusAlert(msg.message, msg.success ? 'success' : 'error');
+        if (manageModal.style.display === 'flex') {
+          showModalAlert(msg.message, msg.success ? 'success' : 'error');
+        } else {
+          showGlobalAlert(msg.message, msg.success ? 'success' : 'error');
+        }
         break;
 
       case 'modelsUpdated':
-        populateModels(msg.models, msg.activeModel);
-        break;
-
-      case 'stateUpdated':
-        currentProvider = msg.state.provider;
-        currentModel = msg.state.model;
-        providerSelect.value = currentProvider;
-        if (pillProvider) pillProvider.textContent = msg.state.providerName || currentProvider;
-        if (pillModel) pillModel.textContent = currentModel;
+        if (modalTargetProvider === msg.provider || !modalTargetProvider) {
+          populateModalModels(msg.models, msg.activeModel);
+        }
         break;
 
       case 'dashboardData':
@@ -437,7 +865,7 @@
     }
   });
 
-  // Announce ready
+  // Announce ready to Extension Host
   if (vscode) {
     vscode.postMessage({ command: 'webviewReady' });
   }

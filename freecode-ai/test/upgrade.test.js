@@ -341,6 +341,10 @@ Module.prototype.require = function (id) {
     await receivedListener({ command: 'getDashboardData', provider: 'current' });
     const dashMsg = sentMessages.find(m => m.type === 'dashboardData');
     assert.ok(dashMsg, 'Should send dashboard data');
+
+    // 5. removeProvider
+    await receivedListener({ command: 'removeProvider', provider: 'groq' });
+    assert.strictEqual(await sm.getApiKey('groq'), null);
   });
 
   // TEST 9: Full Extension Activation & Commands Registration
