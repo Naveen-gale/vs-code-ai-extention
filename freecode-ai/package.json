@@ -23,9 +23,18 @@
     "onCommand:freecodeAI.newChat",
     "onCommand:freecodeAI.openDashboard",
     "onCommand:freecodeAI.simulateFailover",
-    "onCommand:freecodeAI.resetRateLimits"
+    "onCommand:freecodeAI.resetRateLimits",
+    "onCommand:freecodeAI.openProviderPopup",
+    "onCommand:freecodeAI.toggleInline",
+    "onCommand:freecodeAI.triggerInline"
   ],
   "contributes": {
+    "icons": {
+      "freecode-logo": {
+        "description": "FreeCode AI Logo",
+        "default": "./media/icon.svg"
+      }
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -80,10 +89,83 @@
       {
         "command": "freecodeAI.resetRateLimits",
         "title": "FreeCode AI: Reset Rate Limit Cooldowns"
+      },
+      {
+        "command": "freecodeAI.openProviderPopup",
+        "title": "FreeCode AI: Switch Provider / Manage Status"
+      },
+      {
+        "command": "freecodeAI.toggleInline",
+        "title": "FreeCode AI: Toggle Inline Code Suggestions"
+      },
+      {
+        "command": "freecodeAI.triggerInline",
+        "title": "FreeCode AI: Trigger Inline Code Suggestion"
       }
-    ]
+    ],
+    "keybindings": [
+      {
+        "command": "freecodeAI.triggerInline",
+        "key": "alt+/",
+        "mac": "alt+/",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "freecodeAI.triggerInline",
+        "key": "alt+\\",
+        "mac": "alt+\\",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "freecodeAI.triggerInline",
+        "key": "ctrl+alt+space",
+        "mac": "cmd+alt+space",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "FreeCode AI",
+      "properties": {
+        "freecodeAI.inline.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable or disable FreeCode AI inline code suggestions."
+        },
+        "freecodeAI.inline.debounceDelay": {
+          "type": "number",
+          "default": 150,
+          "minimum": 50,
+          "maximum": 3000,
+          "description": "Delay before requesting an inline code suggestion."
+        },
+        "freecodeAI.inline.maxContextLines": {
+          "type": "number",
+          "default": 40,
+          "minimum": 10,
+          "maximum": 300,
+          "description": "Maximum nearby context lines sent to the LLM."
+        },
+        "freecodeAI.inline.maxCompletionTokens": {
+          "type": "number",
+          "default": 64,
+          "minimum": 16,
+          "maximum": 1024,
+          "description": "Maximum generated completion tokens."
+        },
+        "freecodeAI.inline.cacheEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable inline suggestion caching."
+        },
+        "freecodeAI.inline.useActiveProvider": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically use the currently active AI provider and model."
+        }
+      }
+    }
   },
   "scripts": {
-    "test": "node ./test/day1.test.js && node ./test/upgrade.test.js && node ./test/multiProvider.test.js && node ./test/day2Ui.test.js && node ./test/newProviders.test.js"
+    "test": "node ./test/day1.test.js && node ./test/upgrade.test.js && node ./test/multiProvider.test.js && node ./test/day2Ui.test.js && node ./test/newProviders.test.js && node ./test/inlineAndStatusbar.test.js"
   }
 }

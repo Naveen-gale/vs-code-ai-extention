@@ -5,6 +5,9 @@ const { UsageTracker } = require("./usage/usageTracker");
 const { ChatController } = require("./chat/chatController");
 const { ProviderManager } = require("./providers/providerManager");
 const { PROVIDERS, PROVIDER_METADATA } = require("./config/providers");
+const { AgentManager } = require("../agent/agentManager");
+const { StatusBarManager } = require("./statusbar/statusBarManager");
+const { ProviderQuickPick } = require("./statusbar/providerQuickPick");
 
 /**
  * Activates the FreeCode AI extension.
@@ -42,6 +45,44 @@ function activate(context) {
             )
         );
         console.log("FreeCode AI: Sidebar view provider registered (freecodeAI.sidebar).");
+
+        // Initialize Inline Completion Agent Manager
+        let agentManager = null;
+        try {
+            agentManager = new AgentManager({
+                providerManager,
+                secretManager,
+                usageTracker
+            });
+            agentManager.register(context);
+            context.subscriptions.push(agentManager);
+        } catch (err) {
+            console.warn("FreeCode AI: AgentManager initialization notice:", err);
+        }
+
+        // Initialize Native Status Bar Manager
+        let statusBarManager = null;
+        try {
+            statusBarManager = new StatusBarManager({
+                providerManager,
+                usageTracker,
+                agentManager
+            });
+            context.subscriptions.push(statusBarManager);
+        } catch (err) {
+            console.warn("FreeCode AI: StatusBarManager initialization notice:", err);
+        }
+
+        // Provider QuickPick helper
+        const providerQuickPick = new ProviderQuickPick({
+            providerManager,
+            secretManager,
+            usageTracker,
+            chatController,
+            agentManager,
+            statusBarManager,
+            sidebarProvider
+        });
 
         // Command: Open Sidebar
         context.subscriptions.push(
@@ -97,10 +138,22 @@ function activate(context) {
 
                         await chatController.setProvider(providerKey);
 
+                        if (agentManager) {
+                            agentManager.invalidateDirectConnection();
+                        }
+
                         vscode.window.showInformationMessage(
                             `Selected provider: ${selected}`
                         );
                         console.log(`FreeCode AI: Selected provider -> ${selected} (${providerKey})`);
+
+                        if (statusBarManager) {
+                            await statusBarManager.update();
+                        }
+
+                        if (agentManager) {
+                            agentManager.invalidateDirectConnection();
+                        }
 
                         // Notify sidebar provider to update UI if active
                         sidebarProvider.postMessage({
@@ -156,6 +209,14 @@ function activate(context) {
                             `API key for ${PROVIDER_METADATA[providerId]?.name || providerId} saved securely in SecretStorage.`
                         );
 
+                        if (statusBarManager) {
+                            await statusBarManager.update();
+                        }
+
+                        if (agentManager) {
+                            agentManager.invalidateDirectConnection();
+                        }
+
                         sidebarProvider.postMessage({
                             type: 'providersListUpdated',
                             providers: await providerManager.getAllProviderStatuses()
@@ -203,6 +264,15 @@ function activate(context) {
                             await chatController.setProvider(providerManager.getActiveProvider() || null);
                         }
                         vscode.window.showInformationMessage(`Deleted credentials for ${name}.`);
+
+                        if (statusBarManager) {
+                            await statusBarManager.update();
+                        }
+
+                        if (agentManager) {
+                            agentManager.invalidateDirectConnection();
+                        }
+
                         sidebarProvider.postMessage({
                             type: 'providersListUpdated',
                             providers: await providerManager.getAllProviderStatuses()
@@ -266,9 +336,60 @@ function activate(context) {
                         usageTracker.clearCooldown();
                     }
                     vscode.window.showInformationMessage("FreeCode AI: All rate limit cooldowns have been reset.");
+
+                    if (statusBarManager) {
+                        await statusBarManager.update();
+                    }
+
                     if (sidebarProvider && sidebarProvider.chatProvider) {
                         await sidebarProvider.chatProvider.sendProvidersList();
                         await sidebarProvider.chatProvider.sendStateUpdate();
+                    }
+                }
+            )
+        );
+
+        // Command: Open Status Bar Provider Popup
+        context.subscriptions.push(
+            vscode.commands.registerCommand(
+                "freecodeAI.openProviderPopup",
+                async () => {
+                    await providerQuickPick.show();
+                }
+            )
+        );
+
+        // Command: Toggle Inline Suggestions
+        context.subscriptions.push(
+            vscode.commands.registerCommand(
+                "freecodeAI.toggleInline",
+                async () => {
+                    if (agentManager) {
+                        const nextState = await agentManager.toggleEnabled();
+                        if (statusBarManager) {
+                            await statusBarManager.update();
+                        }
+
+                        if (agentManager) {
+                            agentManager.invalidateDirectConnection();
+                        }
+                        vscode.window.showInformationMessage(
+                            `FreeCode AI: Inline suggestions ${nextState ? 'enabled' : 'disabled'}.`
+                        );
+                    }
+                }
+            )
+        );
+
+        // Command: Trigger Inline Code Suggestion Manually
+        context.subscriptions.push(
+            vscode.commands.registerCommand(
+                "freecodeAI.triggerInline",
+                async () => {
+                    try {
+                        await vscode.commands.executeCommand("editor.action.inlineSuggest.trigger");
+                    } catch (e) {
+                        console.warn("FreeCode AI: trigger inline command notice:", e);
                     }
                 }
             )

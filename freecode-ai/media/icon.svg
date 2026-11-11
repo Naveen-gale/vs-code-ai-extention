@@ -1,12 +1,11 @@
-
-<svg xmlns="http://www.w3.org/2000/svg"
-     viewBox="0 0 24 24"
-     fill="none"
-     stroke="currentColor"
-     stroke-width="1.8"
-     stroke-linecap="round"
-     stroke-linejoin="round">
-    <path d="M8 5 2 12l6 7"/>
-    <path d="m16 5 6 7-6 7"/>
-    <path d="m14 3-4 18"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#FFFFFF" stroke-width="1.8">
+  <!-- Code Brackets -->
+  <path d="M6 7 L2.5 12 L6 17" />
+  <path d="M18 7 L21.5 12 L18 17" />
+  <!-- Slanted Wand/Slash with Spark Head -->
+  <line x1="14.5" y1="4.5" x2="9.5" y2="19.5" stroke-width="2" />
+  <!-- Star Burst Top of Wand -->
+  <path d="M15 2 C15 3.5 16 4.5 18 5 C16 5.5 15 6.5 15 8 C15 6.5 14 5.5 12 5 C14 4.5 15 3.5 15 2 Z" fill="#FFFFFF" stroke="none" />
+  <!-- Diagnostic Pulse Dots -->
+  <circle cx="9" cy="12" r="1.2" fill="#FFFFFF" stroke="none" />
 </svg>

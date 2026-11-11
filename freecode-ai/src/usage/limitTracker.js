@@ -170,7 +170,7 @@ class LimitTracker {
       category = ErrorCategory.PERMISSION_DENIED;
     } else if (status === 404 || combined.includes('model not found') || combined.includes('does not exist')) {
       category = ErrorCategory.MODEL_NOT_FOUND;
-    } else if (status === 408 || error?.name === 'AbortError' || combined.includes('timeout') || combined.includes('timed out')) {
+    } else if (status === 408 || status === 499 || error?.name === 'AbortError' || combined.includes('timeout') || combined.includes('timed out') || combined.includes('aborted')) {
       category = ErrorCategory.TIMEOUT;
     } else if (combined.includes('econnrefused') || combined.includes('fetch failed') || combined.includes('network error') || combined.includes('enotfound')) {
       category = ErrorCategory.NETWORK_ERROR;

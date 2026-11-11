@@ -13,7 +13,7 @@ class HttpError extends Error {
 }
 
 /**
- * Perform a JSON request with timeout.
+ * Perform a JSON request with timeout and abort signal support.
  * @param {string} url
  * @param {object} options
  * @param {number} [timeoutMs=30000]
@@ -22,6 +22,19 @@ class HttpError extends Error {
 async function request(url, options = {}, timeoutMs = 30000) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  // Link external signal to controller for immediate keystroke cancellation
+  if (options.signal) {
+    if (options.signal.aborted) {
+      clearTimeout(timeoutId);
+      controller.abort();
+    } else {
+      options.signal.addEventListener('abort', () => {
+        clearTimeout(timeoutId);
+        controller.abort();
+      });
+    }
+  }
 
   try {
     const headers = {
@@ -73,6 +86,9 @@ async function request(url, options = {}, timeoutMs = 30000) {
   } catch (error) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
+      if (options.signal && options.signal.aborted) {
+        throw new HttpError('Request was aborted by user keystroke', 499, null);
+      }
       throw new HttpError(`Request timed out after ${timeoutMs}ms`, 408, null);
     }
     throw error;

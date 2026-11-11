@@ -921,3 +921,61 @@ input:focus {
   justify-content: space-between;
   align-items: center;
 }
+
+.footer{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 11px;
+  padding: 8px 12px;
+  color: var(--text-muted);
+  font-family:'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif;
+}
+
+.sidebar-brand-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.brand-logo-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.freecode-brand-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+}
+
+.brand-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--text-main);
+}
+
+.empty-state-logo {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.freecode-hero-icon {
+  width: 44px;
+  height: 44px;
+  color: var(--accent);
+  filter: drop-shadow(0 2px 8px rgba(78, 142, 247, 0.3));
+}
+
+.freecode-footer-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
