@@ -3,7 +3,7 @@
  * Requires no API key and works with locally running Ollama instances.
  */
 
-const { request, HttpError } = require('../utils/httpClient');
+const httpClient = require('../utils/httpClient');
 
 class OllamaProvider {
   constructor(options = {}) {
@@ -42,15 +42,19 @@ class OllamaProvider {
       }
     };
 
+    const timeout = config.timeoutMs || 300000; // 5 minutes default for local LLM inference
     let data;
     try {
-      data = await request(url, {
+      data = await httpClient.request(url, {
         method: 'POST',
         body: JSON.stringify(body)
-      }, config.timeoutMs || 60000);
+      }, timeout);
     } catch (err) {
       if (err.message && (err.message.includes('ECONNREFUSED') || err.message.includes('fetch failed'))) {
         throw new Error(`Cannot reach Ollama at ${this.endpoint}. Please ensure Ollama is running ('ollama serve').`);
+      }
+      if (err.message && (err.message.includes('timed out') || err.status === 408)) {
+        throw new Error(`Ollama request timed out after ${timeout}ms. Local models take longer to load weights and generate tokens on local hardware. Consider using a smaller model (e.g. llama3.2:1b or phi3) or check system resource utilization.`);
       }
       throw err;
     }
@@ -89,7 +93,7 @@ class OllamaProvider {
   async testConnection() {
     try {
       const url = `${this.endpoint}/api/tags`;
-      const data = await request(url, { method: 'GET' }, 8000);
+      const data = await httpClient.request(url, { method: 'GET' }, 15000);
 
       if (data && Array.isArray(data.models)) {
         const count = data.models.length;

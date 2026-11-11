@@ -16,6 +16,7 @@ const fs = require('fs');
 const mockVscode = {
   window: {
     showInformationMessage: () => Promise.resolve(),
+    showWarningMessage: (msg, ...items) => Promise.resolve(items[0]),
     showErrorMessage: () => Promise.resolve(),
     showQuickPick: (items) => Promise.resolve(items[0]),
     showInputBox: () => Promise.resolve('mock-input'),
@@ -334,6 +335,274 @@ class MockMemento {
     // Provider must NOT be active
     assert.strictEqual(providerManager.getActiveProvider(), null, 'Active provider must remain null');
     assert.strictEqual(chatController.activeProvider, null, 'ChatController must not be activated');
+  });
+
+  // TEST 9: OllamaProvider timeout defaults to 300,000ms (5 min) and handles timeout with actionable guidance
+  await test('TEST 9: OllamaProvider timeout defaults to 300,000ms (5 min) and handles timeout gracefully', async () => {
+    const { OllamaProvider } = require('../src/providers/ollamaProvider');
+    const httpClient = require('../src/utils/httpClient');
+    const origRequest = httpClient.request;
+
+    let capturedTimeout = null;
+    httpClient.request = async (url, opts, timeoutMs) => {
+      capturedTimeout = timeoutMs;
+      throw new httpClient.HttpError(`Request timed out after ${timeoutMs}ms`, 408, null);
+    };
+
+    const ollama = new OllamaProvider({ endpoint: 'http://127.0.0.1:11434', model: 'llama3' });
+    try {
+      await ollama.complete([{ role: 'user', content: 'hello' }]);
+      assert.fail('Should have thrown timeout error');
+    } catch (err) {
+      assert.strictEqual(capturedTimeout, 300000, 'Default Ollama timeout must be 300,000ms (5 minutes)');
+      assert.ok(err.message.includes('Ollama request timed out after 300000ms'), 'Error should contain clear Ollama timeout guidance');
+      assert.ok(err.message.includes('Local models take longer to load'), 'Error should provide hardware explanation and smaller model suggestion');
+    } finally {
+      httpClient.request = origRequest;
+    }
+  });
+
+  // TEST 10: Provider configurations persist across VS Code restarts / reload window via dual-persistence
+  await test('TEST 10: Provider configurations persist across VS Code restarts and closing VS Code', async () => {
+    const tempStorageDir = path.join(__dirname, 'temp_storage_test');
+    if (fs.existsSync(tempStorageDir)) fs.rmSync(tempStorageDir, { recursive: true, force: true });
+    fs.mkdirSync(tempStorageDir, { recursive: true });
+
+    try {
+      const mockContext1 = {
+        globalStorageUri: { fsPath: tempStorageDir },
+        globalState: new MockMemento()
+      };
+      const sharedSecrets = new MockSecretStorage();
+      const secretManager1 = new SecretManager(sharedSecrets);
+      const pm1 = new ProviderManager(mockContext1, secretManager1);
+
+      // Save Ollama (local, no API key) with custom endpoint and model
+      await pm1.setProviderConfiguration(PROVIDERS.OLLAMA, {
+        endpoint: 'http://127.0.0.1:11434',
+        model: 'llama3.2:3b'
+      });
+      await pm1.setActiveProvider(PROVIDERS.OLLAMA);
+
+      // Save Gemini with API key and custom model
+      await secretManager1.storeApiKey(PROVIDERS.GEMINI, 'ai-gemini-sample-key-999');
+      await pm1.setProviderConfiguration(PROVIDERS.GEMINI, {
+        model: 'gemini-1.5-pro'
+      });
+
+      // Verify stored in session 1
+      assert.strictEqual(await pm1.isProviderConfigured(PROVIDERS.OLLAMA), true);
+      assert.strictEqual(await pm1.isProviderConfigured(PROVIDERS.GEMINI), true);
+      assert.strictEqual(pm1.getActiveProvider(), PROVIDERS.OLLAMA);
+
+      // SIMULATE VS CODE RESTART:
+      // Completely new session context, new globalState memento, reading from persistent disk storage
+      const mockContext2 = {
+        globalStorageUri: { fsPath: tempStorageDir },
+        globalState: new MockMemento() // Fresh memento
+      };
+      const secretManager2 = new SecretManager(sharedSecrets); // Secrets preserved in OS storage
+      const pm2 = new ProviderManager(mockContext2, secretManager2);
+
+      // Both providers MUST remain configured after restart!
+      const isOllamaConfigured = await pm2.isProviderConfigured(PROVIDERS.OLLAMA);
+      const isGeminiConfigured = await pm2.isProviderConfigured(PROVIDERS.GEMINI);
+      assert.strictEqual(isOllamaConfigured, true, 'Ollama must remain configured after VS Code restart');
+      assert.strictEqual(isGeminiConfigured, true, 'Gemini must remain configured after VS Code restart');
+
+      // Active provider MUST be preserved!
+      const activeAfterRestart = await pm2.getValidatedActiveProvider();
+      assert.strictEqual(activeAfterRestart, PROVIDERS.OLLAMA, 'Active provider must remain Ollama after restart');
+
+      // Per-provider models MUST be preserved!
+      const ollamaCfg = await pm2.getProviderConfiguration(PROVIDERS.OLLAMA);
+      assert.strictEqual(ollamaCfg.model, 'llama3.2:3b', 'Ollama selected model must be preserved');
+      assert.strictEqual(ollamaCfg.endpoint, 'http://127.0.0.1:11434', 'Ollama endpoint must be preserved');
+
+      const geminiCfg = await pm2.getProviderConfiguration(PROVIDERS.GEMINI);
+      assert.strictEqual(geminiCfg.model, 'gemini-1.5-pro', 'Gemini selected model must be preserved');
+
+      // Statuses must report both as configured
+      const statuses = await pm2.getAllProviderStatuses();
+      const ollamaStatus = statuses.find(s => s.id === PROVIDERS.OLLAMA);
+      const geminiStatus = statuses.find(s => s.id === PROVIDERS.GEMINI);
+      assert.strictEqual(ollamaStatus.isConfigured, true);
+      assert.strictEqual(geminiStatus.isConfigured, true);
+      assert.strictEqual(ollamaStatus.isActive, true);
+      assert.strictEqual(geminiStatus.isActive, false);
+
+      // Explicit deletion removes the chosen provider while leaving others untouched
+      await pm2.removeProvider(PROVIDERS.GEMINI);
+      assert.strictEqual(await pm2.isProviderConfigured(PROVIDERS.GEMINI), false, 'Gemini should now be removed');
+      assert.strictEqual(await pm2.isProviderConfigured(PROVIDERS.OLLAMA), true, 'Ollama must still remain configured');
+      assert.strictEqual(pm2.getActiveProvider(), PROVIDERS.OLLAMA, 'Ollama remains active provider');
+
+    } finally {
+      if (fs.existsSync(tempStorageDir)) {
+        fs.rmSync(tempStorageDir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  // TEST 11: Failover Priority configuration & FallbackManager respects user priority order
+  await test('TEST 11: Failover Priority configuration & FallbackManager respects user priority order', async () => {
+    const { FallbackManager } = require('../src/router/fallbackManager');
+    const secrets = new MockSecretStorage();
+    const globalState = new MockMemento();
+    const secretManager = new SecretManager(secrets);
+    const usageTracker = new UsageTracker(globalState);
+    const providerManager = new ProviderManager(globalState, secretManager);
+
+    // Save Groq as Priority 2
+    await secretManager.storeApiKey(PROVIDERS.GROQ, 'gsk-test-key-1');
+    await providerManager.setProviderConfiguration(PROVIDERS.GROQ, {
+      model: 'llama-3.3-70b-versatile',
+      priority: 2
+    });
+
+    // Save Gemini as Priority 3
+    await secretManager.storeApiKey(PROVIDERS.GEMINI, 'ai-gemini-key-1');
+    await providerManager.setProviderConfiguration(PROVIDERS.GEMINI, {
+      model: 'gemini-1.5-flash',
+      priority: 3
+    });
+
+    // Save Ollama as Priority 1 (Primary!)
+    await providerManager.setProviderConfiguration(PROVIDERS.OLLAMA, {
+      endpoint: 'http://127.0.0.1:11434',
+      model: 'llama3:latest',
+      priority: 1
+    });
+
+    const fallbackMgr = new FallbackManager(providerManager, usageTracker);
+    const chain = await fallbackMgr.getPriorityChain();
+
+    // Priority order MUST be Ollama (1) -> Groq (2) -> Gemini (3)
+    assert.strictEqual(chain.length, 3);
+    assert.strictEqual(chain[0].id, PROVIDERS.OLLAMA, 'First should be Ollama (Priority 1)');
+    assert.strictEqual(chain[1].id, PROVIDERS.GROQ, 'Second should be Groq (Priority 2)');
+    assert.strictEqual(chain[2].id, PROVIDERS.GEMINI, 'Third should be Gemini (Priority 3)');
+
+    // When Ollama fails, the next fallback should be Groq (Priority 2)
+    const nextAfterOllama = await fallbackMgr.getNextProvider(PROVIDERS.OLLAMA);
+    assert.ok(nextAfterOllama);
+    assert.strictEqual(nextAfterOllama.id, PROVIDERS.GROQ);
+    assert.strictEqual(nextAfterOllama.priority, 2);
+
+    // When Groq fails, next fallback should be Ollama (Priority 1) or Gemini (Priority 3)
+    const nextAfterGroq = await fallbackMgr.getNextProvider(PROVIDERS.GROQ);
+    assert.ok(nextAfterGroq);
+    assert.strictEqual(nextAfterGroq.id, PROVIDERS.OLLAMA, 'Should pick Ollama because it is Priority 1');
+  });
+
+  // TEST 12: Failover prompt asks user before switching when model fails or rate limits
+  await test('TEST 12: Failover prompt asks user before switching when model fails or rate limits', async () => {
+    const secrets = new MockSecretStorage();
+    const globalState = new MockMemento();
+    const secretManager = new SecretManager(secrets);
+    const usageTracker = new UsageTracker(globalState);
+    const providerManager = new ProviderManager(globalState, secretManager);
+
+    // Configure Groq (Active)
+    await secretManager.storeApiKey(PROVIDERS.GROQ, 'gsk-key');
+    await providerManager.setProviderConfiguration(PROVIDERS.GROQ, { model: 'llama-3.3-70b-versatile', priority: 1 });
+    await providerManager.setActiveProvider(PROVIDERS.GROQ);
+
+    // Configure Gemini (Fallback)
+    await secretManager.storeApiKey(PROVIDERS.GEMINI, 'gemini-key');
+    await providerManager.setProviderConfiguration(PROVIDERS.GEMINI, { model: 'gemini-1.5-flash', priority: 2 });
+
+    let warningShown = null;
+    let warningItems = null;
+    mockVscode.window.showWarningMessage = async (msg, ...items) => {
+      warningShown = msg;
+      warningItems = items;
+      return items[0]; // User accepts "Switch to ..."
+    };
+
+    const chatController = new ChatController({ secretManager, usageTracker, providerManager, initialProvider: PROVIDERS.GROQ });
+    // Force complete to throw Rate Limit error
+    chatController.sendMessage = async () => {
+      throw new Error('HTTP 429: Too Many Requests (Rate limit reached)');
+    };
+
+    const chatProvider = new ChatProvider({
+      extensionUri: { fsPath: path.resolve(__dirname, '..') },
+      chatController,
+      secretManager,
+      usageTracker,
+      providerManager
+    });
+
+    const sentMessages = [];
+    chatProvider.attachWebview({
+      webview: {
+        options: {},
+        set html(v) {},
+        postMessage: (m) => sentMessages.push(m),
+        onDidReceiveMessage: () => {}
+      }
+    });
+
+    await chatProvider.handleUserMessage('test prompt');
+
+    // Must have sent fallbackSuggestion to Webview
+    const fallbackMsg = sentMessages.find(m => m.type === 'fallbackSuggestion');
+    assert.ok(fallbackMsg, 'Must post fallbackSuggestion message to Webview');
+    assert.strictEqual(fallbackMsg.fallbackProvider.id, PROVIDERS.GEMINI, 'Fallback must be Gemini');
+
+    // Must have prompted user via VS Code notification before switching
+    assert.ok(warningShown, 'Notification must be shown to ask user');
+    assert.ok(warningShown.includes('Groq failed'), 'Warning message must identify failed provider');
+    assert.ok(warningItems.includes('Switch to Google Gemini'), 'Action button must offer to switch');
+  });
+
+  // TEST 13: Simulation test `/test-ratelimit` / `simulateFailover` allows full testing without real API quotas
+  await test('TEST 13: Simulation test `/test-ratelimit` / `simulateFailover` allows full testing without real API quotas', async () => {
+    const secrets = new MockSecretStorage();
+    const globalState = new MockMemento();
+    const secretManager = new SecretManager(secrets);
+    const usageTracker = new UsageTracker(globalState);
+    const providerManager = new ProviderManager(globalState, secretManager);
+
+    await secretManager.storeApiKey(PROVIDERS.GEMINI, 'gemini-key');
+    await providerManager.setProviderConfiguration(PROVIDERS.GEMINI, { model: 'gemini-1.5-flash', priority: 1 });
+    await providerManager.setActiveProvider(PROVIDERS.GEMINI);
+
+    await providerManager.setProviderConfiguration(PROVIDERS.OLLAMA, { endpoint: 'http://127.0.0.1:11434', model: 'llama3', priority: 2 });
+
+    let warningShown = null;
+    mockVscode.window.showWarningMessage = async (msg, ...items) => {
+      warningShown = msg;
+      return items[0];
+    };
+
+    const chatController = new ChatController({ secretManager, usageTracker, providerManager, initialProvider: PROVIDERS.GEMINI });
+    const chatProvider = new ChatProvider({
+      extensionUri: { fsPath: path.resolve(__dirname, '..') },
+      chatController,
+      secretManager,
+      usageTracker,
+      providerManager
+    });
+
+    const sentMessages = [];
+    chatProvider.attachWebview({
+      webview: {
+        options: {},
+        set html(v) {},
+        postMessage: (m) => sentMessages.push(m),
+        onDidReceiveMessage: () => {}
+      }
+    });
+
+    // Send simulation command
+    await chatProvider.handleUserMessage('/test-ratelimit');
+
+    const simMsg = sentMessages.find(m => m.type === 'fallbackSuggestion');
+    assert.ok(simMsg, 'Must trigger fallback suggestion on simulation command');
+    assert.strictEqual(simMsg.fallbackProvider.id, PROVIDERS.OLLAMA);
+    assert.ok(warningShown.includes('[TEST]'), 'Notification must clearly state test simulation');
   });
 
   console.log('\n================================================================');

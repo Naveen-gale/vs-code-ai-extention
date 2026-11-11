@@ -22,12 +22,14 @@
   // DOM Elements - Provider Dashboard
   const providersCardsList = document.getElementById('providers-cards-list');
   const btnAddProvider = document.getElementById('btn-add-provider');
+  const btnTestFailover = document.getElementById('btn-test-failover');
   const globalProviderAlert = document.getElementById('global-provider-alert');
 
   // DOM Elements - Manage Modal
   const manageModal = document.getElementById('manage-modal');
   const modalProviderTitle = document.getElementById('modal-provider-title');
   const modalProviderDropdown = document.getElementById('modal-provider-dropdown');
+  const modalPrioritySelect = document.getElementById('modal-priority-select');
   const btnCloseModal = document.getElementById('btn-close-modal');
   const modalStatusAlert = document.getElementById('modal-status-alert');
   const modalGroupKey = document.getElementById('modal-group-key');
@@ -284,6 +286,7 @@
       header.innerHTML = `
         <div class="provider-card-title">
           <span>${p.name.toUpperCase()}</span>
+          <span class="priority-tag" title="Failover Priority #${p.priority || 1}">Priority #${p.priority || 1}</span>
           ${isAct ? '<span class="active-tag">Active</span>' : ''}
         </div>
         <span class="badge-status ${p.isConfigured ? 'configured' : 'unconfigured'}">
@@ -311,6 +314,10 @@
         <div class="detail-line">
           <span class="detail-label">Status:</span>
           <span>${p.status} (${connBadge})</span>
+        </div>
+        <div class="detail-line">
+          <span class="detail-label">Failover Priority:</span>
+          <span class="detail-val" style="color:var(--vscode-textLink-foreground, #3794ff); font-weight:600;">Priority #${p.priority || 1} ${p.priority === 1 ? '(Primary)' : '(Fallback)'}</span>
         </div>
         <div class="detail-line">
           <span class="detail-label">${p.requiresApiKey ? 'API Key:' : 'Endpoint:'}</span>
@@ -470,6 +477,10 @@
       modalEndpointInput.value = providerInfo.endpoint || 'http://127.0.0.1:11434';
     }
 
+    if (modalPrioritySelect) {
+      modalPrioritySelect.value = String(providerInfo.priority || 1);
+    }
+
     // Request available models for this provider
     if (vscode) {
       vscode.postMessage({
@@ -484,6 +495,26 @@
   if (modalProviderDropdown) {
     modalProviderDropdown.addEventListener('change', () => {
       openManageModal(modalProviderDropdown.value);
+    });
+  }
+
+  if (modalPrioritySelect) {
+    modalPrioritySelect.addEventListener('change', () => {
+      if (modalTargetProvider && vscode) {
+        vscode.postMessage({
+          command: 'setProviderPriority',
+          provider: modalTargetProvider,
+          priority: Number(modalPrioritySelect.value)
+        });
+      }
+    });
+  }
+
+  if (btnTestFailover) {
+    btnTestFailover.addEventListener('click', () => {
+      if (vscode) {
+        vscode.postMessage({ command: 'simulateFailover' });
+      }
     });
   }
 
@@ -502,6 +533,8 @@
 
     const providerInfo = cachedProvidersList.find(p => p.id === modalTargetProvider);
 
+    const priorityVal = modalPrioritySelect ? Number(modalPrioritySelect.value) : 1;
+
     if (modalTargetProvider === 'ollama') {
       const endpoint = (modalEndpointInput && modalEndpointInput.value.trim()) || 'http://127.0.0.1:11434';
       showModalAlert('Saving endpoint & testing Ollama connection...', 'info');
@@ -509,7 +542,8 @@
         vscode.postMessage({
           command: 'saveAndTestConnection',
           provider: 'ollama',
-          endpoint: endpoint
+          endpoint: endpoint,
+          priority: priorityVal
         });
       }
     } else {
@@ -527,7 +561,8 @@
         vscode.postMessage({
           command: 'saveAndTestConnection',
           provider: modalTargetProvider,
-          apiKey: key || undefined
+          apiKey: key || undefined,
+          priority: priorityVal
         });
       }
       if (key && modalApiKeyInput) {
@@ -541,6 +576,7 @@
 
     const providerInfo = cachedProvidersList.find(p => p.id === modalTargetProvider);
     const selectedModel = modalModelSelect ? modalModelSelect.value : null;
+    const priorityVal = modalPrioritySelect ? Number(modalPrioritySelect.value) : 1;
 
     if (!selectedModel) {
       showModalAlert('Please select a model from the list.', 'error');
@@ -555,6 +591,7 @@
           provider: 'ollama',
           endpoint: endpoint,
           model: selectedModel,
+          priority: priorityVal,
           activate: true
         });
       }
@@ -577,6 +614,7 @@
             provider: modalTargetProvider,
             apiKey: key,
             model: selectedModel,
+            priority: priorityVal,
             activate: true
           });
         }
@@ -587,6 +625,7 @@
             command: 'selectModel',
             provider: modalTargetProvider,
             model: selectedModel,
+            priority: priorityVal,
             activate: true
           });
           vscode.postMessage({
@@ -858,6 +897,63 @@
           populateModalModels(msg.models, msg.activeModel);
         }
         break;
+
+      case 'fallbackSuggestion': {
+        const { failedProvider, reason, fallbackProvider, pendingPrompt } = msg;
+        if (!fallbackProvider) break;
+
+        const box = document.createElement('div');
+        box.className = 'fallback-prompt-box';
+        box.innerHTML = `
+          <div class="fallback-prompt-header">
+            <span style="font-weight: 700; color: var(--vscode-errorForeground, #f48771); display: flex; align-items: center; gap: 4px;">
+              ⚠️ ${failedProvider.name} Failed / Rate Limited
+            </span>
+            <span class="badge-status error" style="font-size: 10px;">Failover Available</span>
+          </div>
+          <div style="font-size: 11px; margin: 4px 0 8px 0; color: var(--vscode-foreground); opacity: 0.9;">
+            ${reason}
+          </div>
+          <div style="background: rgba(0,0,0,0.15); padding: 8px; border-radius: 4px; margin-bottom: 8px; font-size: 11px;">
+            <div style="color: var(--vscode-descriptionForeground); margin-bottom: 3px;">Next in User Priority Order:</div>
+            <div style="font-weight: 600; display: flex; align-items: center; gap: 6px;">
+              <span>⚡ ${fallbackProvider.name}</span>
+              <span class="priority-tag" style="font-size: 9px; padding: 1px 5px;">Priority #${fallbackProvider.priority}</span>
+              <span style="color: var(--vscode-descriptionForeground); font-size: 10px;">(${fallbackProvider.model})</span>
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="primary-btn btn-accept-fallback" style="padding: 7px 12px; font-size: 11px; flex: 2; font-weight: 600;">
+              ⚡ Switch to ${fallbackProvider.name} & Retry
+            </button>
+            <button class="secondary-btn btn-dismiss-fallback" style="padding: 7px 10px; font-size: 11px; flex: 1;">
+              Keep Current
+            </button>
+          </div>
+        `;
+
+        const btnAccept = box.querySelector('.btn-accept-fallback');
+        const btnDismiss = box.querySelector('.btn-dismiss-fallback');
+
+        btnAccept.addEventListener('click', () => {
+          box.innerHTML = `<div style="font-size:11px; padding: 6px; color:var(--vscode-testing-iconPassed, #4ec9b0);">✓ Switching to ${fallbackProvider.name} and retrying request...</div>`;
+          if (vscode) {
+            vscode.postMessage({
+              command: 'acceptFallback',
+              provider: fallbackProvider.id,
+              retryText: pendingPrompt
+            });
+          }
+        });
+
+        btnDismiss.addEventListener('click', () => {
+          box.remove();
+        });
+
+        messagesContainer.appendChild(box);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        break;
+      }
 
       case 'dashboardData':
         renderDashboard(msg.data);

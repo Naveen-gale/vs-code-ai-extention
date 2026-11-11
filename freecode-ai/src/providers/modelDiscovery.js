@@ -126,7 +126,7 @@ class ModelDiscovery {
   static async _fetchOllamaModels(endpoint, fallback) {
     const cleanEndpoint = endpoint.replace(/\/+$/, '');
     const url = `${cleanEndpoint}/api/tags`;
-    const data = await request(url, { method: 'GET' }, 8000);
+    const data = await request(url, { method: 'GET' }, 15000);
 
     if (!data || !Array.isArray(data.models)) return fallback;
 

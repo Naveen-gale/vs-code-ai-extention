@@ -28,7 +28,12 @@ class SecretManager {
     const keyName = this._getKeyName(providerId);
 
     if (this.storage && typeof this.storage.store === 'function') {
-      await this.storage.store(keyName, trimmedKey);
+      try {
+        await this.storage.store(keyName, trimmedKey);
+      } catch (err) {
+        console.warn(`FreeCode AI: Failed to store key in SecretStorage for ${providerId}, using fallback:`, err.message);
+        this._memoryFallback.set(keyName, trimmedKey);
+      }
     } else {
       this._memoryFallback.set(keyName, trimmedKey);
     }
@@ -54,8 +59,12 @@ class SecretManager {
     const keyName = this._getKeyName(providerId);
 
     if (this.storage && typeof this.storage.get === 'function') {
-      const key = await this.storage.get(keyName);
-      return key || null;
+      try {
+        const key = await this.storage.get(keyName);
+        if (key) return key;
+      } catch (err) {
+        console.warn(`FreeCode AI: Failed to read key from SecretStorage for ${providerId}:`, err.message);
+      }
     }
 
     return this._memoryFallback.get(keyName) || null;
@@ -71,10 +80,14 @@ class SecretManager {
     const keyName = this._getKeyName(providerId);
 
     if (this.storage && typeof this.storage.delete === 'function') {
-      await this.storage.delete(keyName);
-    } else {
-      this._memoryFallback.delete(keyName);
+      try {
+        await this.storage.delete(keyName);
+      } catch (err) {
+        console.warn(`FreeCode AI: Failed to delete key from SecretStorage for ${providerId}:`, err.message);
+      }
     }
+
+    this._memoryFallback.delete(keyName);
   }
 
   /**

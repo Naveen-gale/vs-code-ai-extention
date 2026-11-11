@@ -4,6 +4,8 @@
  * per-provider model preferences, connection states, and status reporting.
  */
 
+const path = require('path');
+const fs = require('fs');
 const { PROVIDERS, PROVIDER_METADATA } = require('../config/providers');
 const { getDefaultModelId } = require('../config/modelRegistry');
 
@@ -18,7 +20,9 @@ class ProviderManager {
       this._context = contextOrGlobalState;
     } else {
       this._globalState = contextOrGlobalState;
-      this._context = null;
+      this._context = (contextOrGlobalState && (contextOrGlobalState.globalStorageUri || contextOrGlobalState.globalStoragePath))
+        ? contextOrGlobalState
+        : null;
     }
 
     this.secretManager = secretManager;
@@ -33,19 +37,104 @@ class ProviderManager {
     this.secretManager = sm;
   }
 
-  // ------------------- Internal GlobalState Helpers -------------------
+  // ------------------- Internal Storage & Disk Persistence Helpers -------------------
+
+  _getStorageFilePath() {
+    try {
+      let storageDir = null;
+      if (this._context && this._context.globalStorageUri && this._context.globalStorageUri.fsPath) {
+        storageDir = this._context.globalStorageUri.fsPath;
+      } else if (this._context && this._context.globalStoragePath) {
+        storageDir = this._context.globalStoragePath;
+      }
+
+      if (!storageDir) {
+        return null;
+      }
+
+      if (!fs.existsSync(storageDir)) {
+        fs.mkdirSync(storageDir, { recursive: true });
+      }
+
+      return path.join(storageDir, 'provider-configs.json');
+    } catch (e) {
+      return null;
+    }
+  }
+
+  _readDiskConfig() {
+    try {
+      const filePath = this._getStorageFilePath();
+      if (filePath && fs.existsSync(filePath)) {
+        const raw = fs.readFileSync(filePath, 'utf8');
+        return JSON.parse(raw);
+      }
+    } catch (e) {
+      // safe fallback
+    }
+    return null;
+  }
+
+  _writeDiskConfig(config) {
+    try {
+      const filePath = this._getStorageFilePath();
+      if (filePath) {
+        const safe = {};
+        for (const [k, v] of Object.entries(config || {})) {
+          if (typeof v === 'object' && v !== null) {
+            // Strip any sensitive credentials if accidentally present
+            const { apiKey, secret, ...rest } = v;
+            safe[k] = rest;
+          } else {
+            safe[k] = v;
+          }
+        }
+        fs.writeFileSync(filePath, JSON.stringify(safe, null, 2), 'utf8');
+      }
+    } catch (e) {
+      // safe fallback
+    }
+  }
 
   _loadConfig() {
-    if (!this._globalState || typeof this._globalState.get !== 'function') {
-      return {};
+    let config = {};
+    if (this._globalState && typeof this._globalState.get === 'function') {
+      try {
+        const raw = this._globalState.get(this._CONFIG_KEY, {});
+        // Deep clone so in-place edits never mutate VS Code Memento internal object reference
+        config = JSON.parse(JSON.stringify(raw || {}));
+      } catch (e) {
+        config = {};
+      }
     }
-    return this._globalState.get(this._CONFIG_KEY, {}) || {};
+
+    // Merge from disk storage backup
+    const diskConfig = this._readDiskConfig();
+    if (diskConfig && typeof diskConfig === 'object') {
+      for (const [k, v] of Object.entries(diskConfig)) {
+        if (k === '_activeProvider') continue;
+        if (!config[k]) {
+          config[k] = v;
+        } else if (typeof v === 'object' && v !== null) {
+          config[k] = { ...v, ...config[k] };
+        }
+      }
+    }
+
+    return config;
   }
 
   async _saveConfig(config) {
+    // 1. Deep clone so VS Code globalState reference comparison triggers disk write
+    const cloned = JSON.parse(JSON.stringify(config || {}));
     if (this._globalState && typeof this._globalState.update === 'function') {
-      await this._globalState.update(this._CONFIG_KEY, config);
+      await this._globalState.update(this._CONFIG_KEY, cloned);
     }
+
+    // 2. Persist to disk backup
+    const diskConfig = this._readDiskConfig() || {};
+    const merged = { ...diskConfig, ...cloned };
+    this._writeDiskConfig(merged);
   }
 
   // ------------------- Public API -------------------
@@ -87,9 +176,13 @@ class ProviderManager {
    * @returns {Promise<void>}
    */
   async setActiveProvider(providerId) {
+    const val = providerId || null;
     if (this._globalState && typeof this._globalState.update === 'function') {
-      await this._globalState.update(this._ACTIVE_KEY, providerId || null);
+      await this._globalState.update(this._ACTIVE_KEY, val);
     }
+    const diskConfig = this._readDiskConfig() || {};
+    diskConfig._activeProvider = val;
+    this._writeDiskConfig(diskConfig);
   }
 
   /**
@@ -114,10 +207,17 @@ class ProviderManager {
    * @returns {string|null}
    */
   getActiveProvider() {
-    if (!this._globalState || typeof this._globalState.get !== 'function') {
-      return null;
+    let active = null;
+    if (this._globalState && typeof this._globalState.get === 'function') {
+      active = this._globalState.get(this._ACTIVE_KEY, null);
     }
-    return this._globalState.get(this._ACTIVE_KEY, null);
+    if (!active) {
+      const diskConfig = this._readDiskConfig();
+      if (diskConfig && diskConfig._activeProvider) {
+        active = diskConfig._activeProvider;
+      }
+    }
+    return active || null;
   }
 
   /**
@@ -142,8 +242,18 @@ class ProviderManager {
     return null;
   }
 
+  _getDefaultPriority(providerId) {
+    const defaults = {
+      gemini: 1,
+      groq: 2,
+      openrouter: 3,
+      ollama: 4
+    };
+    return defaults[providerId] || 99;
+  }
+
   /**
-   * Get non-secret configuration for a provider (e.g. selected model, endpoint).
+   * Get non-secret configuration for a provider (e.g. selected model, endpoint, priority).
    * @param {string} providerId
    * @returns {Promise<object>}
    */
@@ -154,7 +264,8 @@ class ProviderManager {
     return {
       model: stored.model || getDefaultModelId(providerId) || meta.defaultModel,
       endpoint: stored.endpoint || meta.defaultEndpoint || null,
-      connectionState: this._connectionStates.get(providerId) || stored.connectionState || 'untested'
+      connectionState: this._connectionStates.get(providerId) || stored.connectionState || 'untested',
+      priority: stored.priority !== undefined ? Number(stored.priority) : this._getDefaultPriority(providerId)
     };
   }
 
@@ -176,11 +287,61 @@ class ProviderManager {
     if (updates.endpoint !== undefined) {
       config[providerId].endpoint = updates.endpoint;
     }
+    if (updates.priority !== undefined) {
+      config[providerId].priority = Number(updates.priority);
+    }
     if (updates.connectionState !== undefined) {
       config[providerId].connectionState = updates.connectionState;
       this._connectionStates.set(providerId, updates.connectionState);
     }
     await this._saveConfig(config);
+  }
+
+  /**
+   * Set fallback priority for a provider (e.g. 1 = Primary, 2 = 1st Fallback, etc.).
+   * @param {string} providerId
+   * @param {number} priority
+   * @returns {Promise<void>}
+   */
+  async setProviderPriority(providerId, priority) {
+    await this.setProviderConfiguration(providerId, { priority: Number(priority) });
+  }
+
+  /**
+   * Get the next best fallback provider ordered by user priority.
+   * Excludes the failed provider and any provider currently cooling down or unconfigured.
+   * @param {string} failedProviderId
+   * @param {import('../usage/usageTracker').UsageTracker} [usageTracker]
+   * @returns {Promise<{ id: string, name: string, model: string, priority: number } | null>}
+   */
+  async getNextFallbackProvider(failedProviderId, usageTracker = null) {
+    const configured = await this.getConfiguredProviders();
+    const candidates = [];
+
+    for (const id of configured) {
+      if (id === failedProviderId) continue;
+
+      // Filter out providers currently cooling down
+      if (usageTracker) {
+        const cd = usageTracker.getCooldownInfo(id);
+        if (cd && cd.active) continue;
+      }
+
+      const cfg = await this.getProviderConfiguration(id);
+      const meta = PROVIDER_METADATA[id] || { id, name: id };
+      candidates.push({
+        id,
+        name: meta.name || id,
+        model: cfg.model || meta.defaultModel,
+        priority: typeof cfg.priority === 'number' ? cfg.priority : this._getDefaultPriority(id)
+      });
+    }
+
+    if (candidates.length === 0) return null;
+
+    // Sort by priority ascending (1 = highest priority, 2, 3...)
+    candidates.sort((a, b) => a.priority - b.priority);
+    return candidates[0];
   }
 
   /**
@@ -242,6 +403,7 @@ class ProviderManager {
       maskedKey,
       selectedModel: config.model,
       endpoint: config.endpoint,
+      priority: config.priority,
       isActive,
       apiKeyUrl: meta.apiKeyUrl || null
     };
@@ -275,7 +437,18 @@ class ProviderManager {
     // 2. Clear stored globalState config for this provider
     const config = this._loadConfig();
     delete config[providerId];
-    await this._saveConfig(config);
+    const cloned = JSON.parse(JSON.stringify(config || {}));
+    if (this._globalState && typeof this._globalState.update === 'function') {
+      await this._globalState.update(this._CONFIG_KEY, cloned);
+    }
+
+    // Explicitly update disk storage
+    const diskConfig = this._readDiskConfig() || {};
+    delete diskConfig[providerId];
+    if (diskConfig._activeProvider === providerId) {
+      diskConfig._activeProvider = null;
+    }
+    this._writeDiskConfig(diskConfig);
 
     // 3. Clear in-memory connection state
     this._connectionStates.delete(providerId);

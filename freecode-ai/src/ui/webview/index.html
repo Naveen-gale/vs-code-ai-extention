@@ -65,7 +65,10 @@
           <h3>AI Providers</h3>
           <p class="section-desc">Manage credentials and switch active models independently.</p>
         </div>
-        <button id="btn-add-provider" class="secondary-btn" style="width: auto; padding: 4px 10px; font-size: 11px;">+ Add / Setup</button>
+        <div style="display: flex; gap: 6px;">
+          <button id="btn-test-failover" class="secondary-btn" style="width: auto; padding: 4px 10px; font-size: 11px; display: inline-flex; align-items: center; gap: 4px;" title="Test model failover and rate limit switching without real quota exhaustion">🧪 Test Failover</button>
+          <button id="btn-add-provider" class="secondary-btn" style="width: auto; padding: 4px 10px; font-size: 11px;">+ Add / Setup</button>
+        </div>
       </div>
 
       <!-- Live Notification Banner -->
@@ -129,6 +132,18 @@
             </div>
             <select id="modal-model-select"></select>
             <div id="modal-model-desc" class="form-hint" style="margin-top: 5px;"></div>
+          </div>
+
+          <!-- Failover Priority Order -->
+          <div class="form-group" style="margin-top: 12px; border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2)); padding-top: 10px;">
+            <label for="modal-priority-select">Failover / Rate Limit Priority</label>
+            <select id="modal-priority-select">
+              <option value="1">Priority 1 (Primary / Highest)</option>
+              <option value="2">Priority 2 (1st Fallback)</option>
+              <option value="3">Priority 3 (2nd Fallback)</option>
+              <option value="4">Priority 4 (3rd Fallback)</option>
+            </select>
+            <div class="form-hint">When this model hits rate limits or fails, FreeCode AI will ask before switching to the next priority provider.</div>
           </div>
 
           <!-- Below: ONLY ONE BUTTON: Select this Model -->

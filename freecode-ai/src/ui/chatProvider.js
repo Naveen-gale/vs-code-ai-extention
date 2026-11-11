@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { PROVIDERS, PROVIDER_METADATA } = require('../config/providers');
 const { ModelDiscovery } = require('../providers/modelDiscovery');
+const { FallbackManager } = require('../router/fallbackManager');
 
 class ChatProvider {
   /**
@@ -25,6 +26,7 @@ class ChatProvider {
     this.secretManager = secretManager;
     this.usageTracker = usageTracker;
     this.providerManager = providerManager;
+    this.fallbackManager = new FallbackManager(providerManager, usageTracker);
     this._view = null;
   }
 
@@ -148,8 +150,24 @@ class ChatProvider {
 
       case 'selectModel':
         await this.handleSelectModel(message.provider, message.model, {
-          activate: message.activate
+          activate: message.activate,
+          priority: message.priority
         });
+        break;
+
+      case 'acceptFallback':
+        await this.executeFailoverSwitch(message.provider, message.retryText);
+        break;
+
+      case 'simulateFailover':
+        await this.handleSimulateFailover(message.reason, message.retryText);
+        break;
+
+      case 'setProviderPriority':
+        if (this.providerManager) {
+          await this.providerManager.setProviderPriority(message.provider, message.priority);
+          await this.sendProvidersList();
+        }
         break;
 
       case 'getDashboardData':
@@ -237,7 +255,10 @@ class ChatProvider {
     });
   }
 
-  async handleUserMessage(text) {
+  async handleUserMessage(text, options = {}) {
+    const trimmed = (text || '').trim();
+    const retryDepth = options.retryDepth || 0;
+
     // 1. Immediately echo user message to UI
     this.postMessage({
       type: 'messageAdded',
@@ -246,6 +267,12 @@ class ChatProvider {
         content: text
       }
     });
+
+    // Handle special simulated failover test commands
+    if (trimmed === '/test-ratelimit' || trimmed === '/simulate-failover') {
+      await this.handleSimulateFailover('Simulated HTTP 429: Too Many Requests (Rate limit reached)', 'Hello from failover test!');
+      return;
+    }
 
     // 2. Set thinking status
     this.postMessage({
@@ -270,6 +297,9 @@ class ChatProvider {
 
       this.postMessage({ type: 'status', status: 'ready' });
     } catch (err) {
+      const activeProv = this.chatController ? this.chatController.activeProvider : null;
+      const failedMeta = PROVIDER_METADATA[activeProv] || { name: activeProv || 'AI Provider' };
+
       this.postMessage({
         type: 'messageAdded',
         message: {
@@ -279,6 +309,36 @@ class ChatProvider {
         }
       });
       this.postMessage({ type: 'status', status: 'ready' });
+
+      // Determine next fallback provider according to user priority (prevent infinite loop)
+      if (this.providerManager && activeProv && retryDepth < 1) {
+        const fallback = await this.providerManager.getNextFallbackProvider(activeProv, this.usageTracker);
+        if (fallback) {
+          // 1. Post interactive fallback suggestion to Webview
+          this.postMessage({
+            type: 'fallbackSuggestion',
+            failedProvider: {
+              id: activeProv,
+              name: failedMeta.name
+            },
+            reason: err.message,
+            fallbackProvider: fallback,
+            pendingPrompt: text
+          });
+
+          // 2. Ask user via VS Code notification before switching
+          const switchButton = `Switch to ${fallback.name}`;
+          vscode.window.showWarningMessage(
+            `FreeCode AI: ${failedMeta.name} failed (${err.message.slice(0, 90)}...). Would you like to switch to priority ${fallback.priority} provider ${fallback.name}?`,
+            switchButton,
+            'Keep Current'
+          ).then(async (selection) => {
+            if (selection === switchButton) {
+              await this.executeFailoverSwitch(fallback.id, text, { retryDepth: retryDepth + 1 });
+            }
+          });
+        }
+      }
     }
   }
 
@@ -308,6 +368,9 @@ class ChatProvider {
       const updateData = { connectionState: 'configured' };
       if (options.model) {
         updateData.model = options.model;
+      }
+      if (options.priority !== undefined) {
+        updateData.priority = Number(options.priority);
       }
       await this.providerManager.setProviderConfiguration(providerId, updateData);
     }
@@ -350,6 +413,9 @@ class ChatProvider {
       const updateData = { endpoint, connectionState: 'configured' };
       if (options.model) {
         updateData.model = options.model;
+      }
+      if (options.priority !== undefined) {
+        updateData.priority = Number(options.priority);
       }
       await this.providerManager.setProviderConfiguration(PROVIDERS.OLLAMA, updateData);
     }
@@ -502,7 +568,11 @@ class ChatProvider {
     if (!targetProvider) return;
 
     if (this.providerManager) {
-      await this.providerManager.setProviderConfiguration(targetProvider, { model: modelId });
+      const updateData = { model: modelId };
+      if (options.priority !== undefined) {
+        updateData.priority = Number(options.priority);
+      }
+      await this.providerManager.setProviderConfiguration(targetProvider, updateData);
     }
 
     if (options.activate) {
@@ -526,6 +596,86 @@ class ChatProvider {
 
     await this.sendProvidersList();
     await this.sendStateUpdate();
+  }
+
+  /**
+   * Switch to a fallback provider and optionally retry the pending prompt.
+   * @param {string} targetProviderId
+   * @param {string} [retryPrompt]
+   * @param {object} [options]
+   */
+  async executeFailoverSwitch(targetProviderId, retryPrompt = null, options = {}) {
+    if (!targetProviderId) return;
+    const targetMeta = PROVIDER_METADATA[targetProviderId] || { name: targetProviderId };
+
+    await this.handleSwitchProvider(targetProviderId);
+
+    vscode.window.showInformationMessage(
+      `FreeCode AI: Switched active provider to ${targetMeta.name}.`
+    );
+
+    const depth = options.retryDepth || 0;
+    if (retryPrompt && depth < 1) {
+      await this.handleUserMessage(retryPrompt, { retryDepth: depth + 1 });
+    }
+  }
+
+  /**
+   * Simulate a rate limit (HTTP 429) or failure on the active provider for testing failover.
+   * Allows the user to verify failover switching without needing to exhaust real API quotas.
+   * @param {string} [reason]
+   * @param {string} [retryPrompt]
+   */
+  async handleSimulateFailover(reason = 'Simulated HTTP 429: Rate limit reached (Too Many Requests)', retryPrompt = 'Hello from failover test!') {
+    const activeProv = this.chatController ? this.chatController.activeProvider : null;
+    if (!activeProv) {
+      vscode.window.showInformationMessage('FreeCode AI: No active provider configured to test failover.');
+      return;
+    }
+    const failedMeta = PROVIDER_METADATA[activeProv] || { name: activeProv };
+
+    // Record error in chat history
+    this.postMessage({
+      type: 'messageAdded',
+      message: {
+        role: 'assistant',
+        content: `⚠️ [SIMULATION TEST] Rate limit reached for ${failedMeta.name}: ${reason}`,
+        error: true
+      }
+    });
+
+    const fallback = await this.providerManager.getNextFallbackProvider(activeProv, this.usageTracker);
+
+    if (!fallback) {
+      vscode.window.showWarningMessage(
+        `FreeCode AI Test: ${failedMeta.name} simulated rate limit, but no other configured fallback provider was found. Please configure a secondary provider in the Providers tab to test switching.`
+      );
+      return;
+    }
+
+    // 1. Post fallback suggestion to Webview for 1-click switch
+    this.postMessage({
+      type: 'fallbackSuggestion',
+      failedProvider: {
+        id: activeProv,
+        name: failedMeta.name
+      },
+      reason: `[Simulation Test] ${reason}`,
+      fallbackProvider: fallback,
+      pendingPrompt: retryPrompt
+    });
+
+    // 2. Ask user via VS Code notification before switching
+    const switchButton = `Switch to ${fallback.name}`;
+    vscode.window.showWarningMessage(
+      `FreeCode AI [TEST]: ${failedMeta.name} reached rate limit. Switch to next priority provider ${fallback.name} (Priority #${fallback.priority})?`,
+      switchButton,
+      'Keep Current'
+    ).then(async (selection) => {
+      if (selection === switchButton) {
+        await this.executeFailoverSwitch(fallback.id, retryPrompt);
+      }
+    });
   }
 
   sendDashboardData(providerFilter) {

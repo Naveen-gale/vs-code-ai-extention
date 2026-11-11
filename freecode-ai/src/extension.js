@@ -17,7 +17,7 @@ function activate(context) {
         // Initialize core services
         const secretManager = new SecretManager(context.secrets);
         const usageTracker = new UsageTracker(context.globalState);
-        const providerManager = new ProviderManager(context.globalState, secretManager);
+        const providerManager = new ProviderManager(context, secretManager);
 
         const activeProvider = providerManager.getActiveProvider();
         const chatController = new ChatController({
@@ -210,6 +210,25 @@ function activate(context) {
                 "freecodeAI.openDashboard",
                 async () => {
                     await vscode.commands.executeCommand("freecodeAI.openSidebar");
+                }
+            )
+        );
+
+        // Command: Simulate Rate Limit / Failover Test
+        context.subscriptions.push(
+            vscode.commands.registerCommand(
+                "freecodeAI.simulateFailover",
+                async () => {
+                    if (sidebarProvider && sidebarProvider.chatProvider) {
+                        await sidebarProvider.chatProvider.handleSimulateFailover();
+                    } else {
+                        await vscode.commands.executeCommand("freecodeAI.openSidebar");
+                        setTimeout(async () => {
+                            if (sidebarProvider && sidebarProvider.chatProvider) {
+                                await sidebarProvider.chatProvider.handleSimulateFailover();
+                            }
+                        }, 600);
+                    }
                 }
             )
         );

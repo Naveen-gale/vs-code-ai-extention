@@ -21,7 +21,8 @@
     "onCommand:freecodeAI.setApiKey",
     "onCommand:freecodeAI.deleteProvider",
     "onCommand:freecodeAI.newChat",
-    "onCommand:freecodeAI.openDashboard"
+    "onCommand:freecodeAI.openDashboard",
+    "onCommand:freecodeAI.simulateFailover"
   ],
   "contributes": {
     "viewsContainers": {
@@ -70,6 +71,10 @@
       {
         "command": "freecodeAI.openDashboard",
         "title": "FreeCode AI: Open Usage Dashboard"
+      },
+      {
+        "command": "freecodeAI.simulateFailover",
+        "title": "FreeCode AI: Test Rate Limit / Failover Switch"
       }
     ]
   },
