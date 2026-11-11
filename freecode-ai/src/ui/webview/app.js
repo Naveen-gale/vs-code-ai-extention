@@ -75,6 +75,14 @@
   const refreshDashboardBtn = document.getElementById('btn-refresh-dashboard');
   const resetUsageBtn = document.getElementById('btn-reset-usage');
   const btnResetRateLimits = document.getElementById('btn-reset-rate-limits');
+  const dashVelocityStatus = document.getElementById('dash-velocity-status');
+  const dashVelocityDesc = document.getElementById('dash-velocity-desc');
+  const dashRpm = document.getElementById('dash-rpm');
+  const dashMaxRpm = document.getElementById('dash-max-rpm');
+  const dashTpm = document.getElementById('dash-tpm');
+  const dashMaxTpm = document.getElementById('dash-max-tpm');
+  const dashTokensSaved = document.getElementById('dash-tokens-saved');
+  const dashSavingsBadge = document.getElementById('dash-savings-badge');
 
   // State
   let currentActiveProvider = null;
@@ -985,6 +993,38 @@
       dashTokenType.textContent = `${tokens.reported} reported, ${tokens.estimated} estimated.`;
     } else {
       dashTokenType.textContent = 'No token usage recorded yet.';
+    }
+
+    // Velocity & API Limit Guard
+    const velocity = data.velocity || { rpm: 0, tpm: 0, maxRpm: 30, maxTpm: 6000, status: 'Optimal', headroomPercent: 100, description: 'Standard Tier' };
+    if (dashRpm) dashRpm.textContent = velocity.rpm;
+    if (dashMaxRpm) dashMaxRpm.textContent = velocity.maxRpm.toLocaleString();
+    if (dashTpm) dashTpm.textContent = velocity.tpm.toLocaleString();
+    if (dashMaxTpm) dashMaxTpm.textContent = velocity.maxTpm.toLocaleString();
+    if (dashVelocityDesc) dashVelocityDesc.textContent = velocity.description || 'Standard Tier';
+
+    if (dashVelocityStatus) {
+      if (velocity.status === 'Cooldown') {
+        dashVelocityStatus.className = 'cooldown-badge cooling';
+        dashVelocityStatus.textContent = '● Cooling Down';
+      } else if (velocity.status === 'Near Limit') {
+        dashVelocityStatus.className = 'cooldown-badge cooling';
+        dashVelocityStatus.textContent = `● Near Limit (${velocity.headroomPercent}% Headroom)`;
+      } else if (velocity.status === 'Moderate') {
+        dashVelocityStatus.className = 'cooldown-badge normal';
+        dashVelocityStatus.textContent = `● Moderate (${velocity.headroomPercent}% Headroom)`;
+      } else {
+        dashVelocityStatus.className = 'cooldown-badge normal';
+        dashVelocityStatus.textContent = `● Optimal (${velocity.headroomPercent}% Headroom)`;
+      }
+    }
+
+    // Token Efficiency & Savings
+    const efficiency = data.efficiency || { tokensSaved: tokens.saved || 0, savingsPercent: 0 };
+    if (dashTokensSaved) dashTokensSaved.textContent = (efficiency.tokensSaved || 0).toLocaleString();
+    if (dashSavingsBadge) {
+      const pct = efficiency.savingsPercent || 0;
+      dashSavingsBadge.textContent = `${pct}% tokens saved`;
     }
   }
 

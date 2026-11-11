@@ -33,7 +33,8 @@ class UsageStorage {
         completion: 0,
         total: 0,
         reported: 0,
-        estimated: 0
+        estimated: 0,
+        saved: 0
       },
       lastSuccessfulRequest: null,
       lastError: null,
@@ -52,7 +53,8 @@ class UsageStorage {
         completion: 0,
         total: 0,
         reported: 0,
-        estimated: 0
+        estimated: 0,
+        saved: 0
       },
       lastSuccessfulRequest: null,
       lastError: null

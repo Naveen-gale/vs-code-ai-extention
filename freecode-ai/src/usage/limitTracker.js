@@ -15,10 +15,128 @@ const ErrorCategory = {
   UNKNOWN: 'UNKNOWN'
 };
 
+const PROVIDER_RATE_LIMITS = {
+  groq: { maxRpm: 30, maxTpm: 6000, safeRpm: 25, safeTpm: 5000, desc: '30 RPM / 6,000 TPM (Free Tier)' },
+  gemini: { maxRpm: 15, maxTpm: 1000000, safeRpm: 12, safeTpm: 800000, desc: '15 RPM / 1M TPM (Free Tier)' },
+  openrouter: { maxRpm: 20, maxTpm: 40000, safeRpm: 16, safeTpm: 32000, desc: '20 RPM (Free Tier)' },
+  cohere: { maxRpm: 10, maxTpm: 10000, safeRpm: 8, safeTpm: 8000, desc: '10 RPM (Trial Tier)' },
+  cloudflare: { maxRpm: 1200, maxTpm: 100000, safeRpm: 1000, safeTpm: 90000, desc: '1,200 RPM (Workers AI)' },
+  mistral: { maxRpm: 10, maxTpm: 15000, safeRpm: 8, safeTpm: 12000, desc: '10 RPM (Standard)' },
+  nvidia: { maxRpm: 20, maxTpm: 20000, safeRpm: 16, safeTpm: 16000, desc: '20 RPM (Starter Credits)' },
+  deepseek: { maxRpm: 60, maxTpm: 60000, safeRpm: 50, safeTpm: 50000, desc: '60 RPM (Pay-as-you-go)' },
+  huggingface: { maxRpm: 15, maxTpm: 15000, safeRpm: 12, safeTpm: 12000, desc: '15 RPM (Serverless Free)' },
+  openai: { maxRpm: 60, maxTpm: 40000, safeRpm: 50, safeTpm: 35000, desc: '60 RPM (Standard Tier)' },
+  ollama: { maxRpm: 9999, maxTpm: 9999999, safeRpm: 9999, safeTpm: 9999999, desc: 'Unlimited (Local Offline)' }
+};
+
 class LimitTracker {
   constructor() {
     /** @type {Map<string, { expiresAt: number, reason: string, category: string }>} */
     this.cooldowns = new Map();
+    /** @type {Map<string, Array<{ timestamp: number, tokens: number }>>} */
+    this.requestWindows = new Map();
+  }
+
+  /**
+   * Record request velocity in sliding 60-second window to prevent rate-limit hits.
+   * @param {string} providerId
+   * @param {number} [tokenEstimate=0]
+   */
+  recordVelocity(providerId, tokenEstimate = 0) {
+    if (!providerId) return;
+    const id = providerId.toLowerCase();
+    this._pruneVelocity(id);
+    const windowList = this.requestWindows.get(id) || [];
+    windowList.push({
+      timestamp: Date.now(),
+      tokens: tokenEstimate || 0
+    });
+    this.requestWindows.set(id, windowList);
+  }
+
+  _pruneVelocity(providerId) {
+    const id = providerId.toLowerCase();
+    const windowList = this.requestWindows.get(id);
+    if (!windowList || windowList.length === 0) return;
+    const cutoff = Date.now() - 60000;
+    const filtered = windowList.filter(item => item.timestamp >= cutoff);
+    this.requestWindows.set(id, filtered);
+  }
+
+  /**
+   * Get velocity and rate-limit headroom information for a provider.
+   * @param {string} providerId
+   */
+  getVelocityInfo(providerId) {
+    if (!providerId) {
+      return {
+        rpm: 0,
+        tpm: 0,
+        maxRpm: 30,
+        maxTpm: 6000,
+        loadPercent: 0,
+        headroomPercent: 100,
+        status: 'Optimal',
+        isNearingLimit: false,
+        description: 'Standard'
+      };
+    }
+
+    const id = providerId.toLowerCase();
+    const limits = PROVIDER_RATE_LIMITS[id] || { maxRpm: 30, maxTpm: 30000, safeRpm: 25, safeTpm: 25000, desc: 'Standard Tier' };
+
+    this._pruneVelocity(id);
+    const windowList = this.requestWindows.get(id) || [];
+
+    const rpm = windowList.length;
+    let tpm = 0;
+    for (const w of windowList) {
+      tpm += (w.tokens || 0);
+    }
+
+    const rpmRatio = limits.maxRpm > 0 ? rpm / limits.maxRpm : 0;
+    const tpmRatio = limits.maxTpm > 0 ? tpm / limits.maxTpm : 0;
+    const loadFactor = Math.max(rpmRatio, tpmRatio);
+    const loadPercent = Math.min(100, Math.round(loadFactor * 100));
+
+    const cd = this.getCooldownInfo(providerId);
+    let status = 'Optimal';
+    let isNearingLimit = false;
+
+    if (cd && cd.active) {
+      status = 'Cooldown';
+      isNearingLimit = true;
+    } else if (loadPercent >= 80) {
+      status = 'Near Limit';
+      isNearingLimit = true;
+    } else if (loadPercent >= 50) {
+      status = 'Moderate';
+    } else {
+      status = 'Optimal';
+    }
+
+    return {
+      rpm,
+      tpm,
+      maxRpm: limits.maxRpm,
+      maxTpm: limits.maxTpm,
+      loadPercent,
+      headroomPercent: Math.max(0, 100 - loadPercent),
+      status,
+      isNearingLimit,
+      description: limits.desc
+    };
+  }
+
+  /**
+   * Check if provider is nearing rate limits (>80% capacity within 60s window).
+   * @param {string} providerId
+   * @returns {boolean}
+   */
+  isNearingRateLimit(providerId) {
+    if (!providerId) return false;
+    const v = this.getVelocityInfo(providerId);
+    return v.isNearingLimit;
   }
 
   /**

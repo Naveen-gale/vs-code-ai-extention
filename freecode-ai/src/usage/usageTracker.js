@@ -20,13 +20,18 @@ class UsageTracker {
    * Record that a request has started.
    * @param {string} providerId
    * @param {string} modelId
+   * @param {object} [options]
    */
-  async recordRequestStart(providerId, modelId) {
+  async recordRequestStart(providerId, modelId, options = {}) {
     const pStats = this.storage.getProviderStats(providerId);
     const mStats = this.storage.getModelStats(providerId, modelId);
 
     pStats.totalRequests += 1;
     mStats.totalRequests += 1;
+
+    // Track request velocity in sliding 60-second window
+    const estTokens = options.estimatedTokens || 100;
+    this.limitTracker.recordVelocity(providerId, estTokens);
 
     await this.storage.save();
   }
@@ -36,8 +41,9 @@ class UsageTracker {
    * @param {string} providerId
    * @param {string} modelId
    * @param {{ promptTokens: number, completionTokens: number, totalTokens: number, isEstimated: boolean }} usage
+   * @param {object} [options]
    */
-  async recordSuccess(providerId, modelId, usage = {}) {
+  async recordSuccess(providerId, modelId, usage = {}, options = {}) {
     const pStats = this.storage.getProviderStats(providerId);
     const mStats = this.storage.getModelStats(providerId, modelId);
     const now = new Date().toISOString();
@@ -58,6 +64,11 @@ class UsageTracker {
     mStats.tokens.prompt += pTok;
     mStats.tokens.completion += cTok;
     mStats.tokens.total += tTok;
+
+    if (options.tokensSaved) {
+      pStats.tokens.saved = (pStats.tokens.saved || 0) + options.tokensSaved;
+      mStats.tokens.saved = (mStats.tokens.saved || 0) + options.tokensSaved;
+    }
 
     if (usage.isEstimated) {
       pStats.tokens.estimated += tTok;
@@ -132,6 +143,32 @@ class UsageTracker {
   }
 
   /**
+   * Record request velocity.
+   * @param {string} providerId
+   * @param {number} [tokens=0]
+   */
+  recordRequestVelocity(providerId, tokens = 0) {
+    this.limitTracker.recordVelocity(providerId, tokens);
+  }
+
+  /**
+   * Check if provider is approaching its rate limit.
+   * @param {string} providerId
+   * @returns {boolean}
+   */
+  isNearingRateLimit(providerId) {
+    return this.limitTracker.isNearingRateLimit(providerId);
+  }
+
+  /**
+   * Get live velocity info for a provider.
+   * @param {string} providerId
+   */
+  getVelocityInfo(providerId) {
+    return this.limitTracker.getVelocityInfo(providerId);
+  }
+
+  /**
    * Get structured dashboard data.
    * @param {string} activeProvider
    * @param {string} activeModel
@@ -141,6 +178,12 @@ class UsageTracker {
     const providerStats = this.storage.getProviderStats(activeProvider);
     const modelStats = this.storage.getModelStats(activeProvider, activeModel);
     const cooldownInfo = this.getCooldownInfo(activeProvider);
+    const velocity = this.limitTracker.getVelocityInfo(activeProvider);
+
+    const tokens = providerStats.tokens || { prompt: 0, completion: 0, total: 0, reported: 0, estimated: 0, saved: 0 };
+    const tokensSaved = tokens.saved || 0;
+    const totalAttempted = (tokens.total || 0) + tokensSaved;
+    const savingsPercent = totalAttempted > 0 ? Math.round((tokensSaved / totalAttempted) * 100) : 0;
 
     return {
       activeProvider,
@@ -148,7 +191,12 @@ class UsageTracker {
       cooldown: cooldownInfo,
       providerStats,
       modelStats,
-      allProviders: all.providers
+      allProviders: all.providers,
+      velocity,
+      efficiency: {
+        tokensSaved,
+        savingsPercent
+      }
     };
   }
 

@@ -783,6 +783,81 @@ async function run() {
     ProviderFactory.create = origCreate;
   });
 
+  // TEST 19: PromptBuilder token compaction, savings calculation, and accuracy guidelines
+  await test('TEST 19: PromptBuilder compacts prompt whitespace and enforces token budget', () => {
+    const { PromptBuilder } = require('../src/chat/promptBuilder');
+
+    const longMessage = 'function calculate() {\n\n\n\n  const x = 10;   \n\n\n  return x * 2;\n}\n';
+    const compacted = PromptBuilder.compactText(longMessage);
+    assert.strictEqual(compacted.includes('\n\n\n'), false, 'Should collapse 3+ consecutive newlines');
+    assert.strictEqual(compacted.includes('10;   '), false, 'Should strip trailing spaces');
+
+    const history = [
+      { role: 'user', content: 'Here is my code:\n\n\n\nfunction a() { return 1; }   ' },
+      { role: 'assistant', content: 'Here is the fix:\n\n\n\n```js\nfunction a() { return 2; }\n```   ' },
+      { role: 'user', content: 'Can you refactor it?' }
+    ];
+
+    const prepared = PromptBuilder.prepareMessages(history);
+    assert.ok(Array.isArray(prepared), 'Must return an array of messages');
+    assert.strictEqual(prepared.length, 3);
+    assert.ok(prepared.tokensSaved >= 0, 'Must calculate tokensSaved count');
+
+    const sysPrompt = PromptBuilder.getSystemPrompt();
+    assert.ok(sysPrompt.includes('token-efficient'), 'System prompt must instruct token efficiency');
+    assert.ok(sysPrompt.includes('accuracy') || sysPrompt.includes('correctness'), 'System prompt must instruct accuracy');
+  });
+
+  // TEST 20: LimitTracker sliding window velocity tracking (RPM/TPM) and rate limit guard
+  await test('TEST 20: LimitTracker sliding window velocity tracking (RPM/TPM) and rate limit guard', () => {
+    const tracker = new LimitTracker();
+
+    // Initially 0 RPM/TPM
+    const initialV = tracker.getVelocityInfo('groq');
+    assert.strictEqual(initialV.rpm, 0);
+    assert.strictEqual(initialV.tpm, 0);
+    assert.strictEqual(initialV.isNearingLimit, false);
+    assert.strictEqual(initialV.status, 'Optimal');
+
+    // Record 5 requests with 500 tokens each (2500 TPM)
+    for (let i = 0; i < 5; i++) {
+      tracker.recordVelocity('groq', 500);
+    }
+
+    const v2 = tracker.getVelocityInfo('groq');
+    assert.strictEqual(v2.rpm, 5);
+    assert.strictEqual(v2.tpm, 2500);
+    assert.strictEqual(v2.maxRpm, 30);
+    assert.strictEqual(v2.maxTpm, 6000);
+
+    // Record up to 26 requests (above safeRpm 25 for Groq)
+    for (let i = 0; i < 21; i++) {
+      tracker.recordVelocity('groq', 100);
+    }
+    assert.strictEqual(tracker.isNearingRateLimit('groq'), true, 'Should detect nearing rate limit when RPM exceeds 80%');
+  });
+
+  // TEST 21: UsageTracker records tokens saved and reports efficiency in dashboard data
+  await test('TEST 21: UsageTracker records tokens saved and reports efficiency in dashboard data', async () => {
+    const context = createMockContext();
+    const tracker = new UsageTracker(context.globalState);
+
+    await tracker.recordRequestStart('gemini', 'gemini-1.5-flash', { estimatedTokens: 150 });
+    await tracker.recordSuccess('gemini', 'gemini-1.5-flash', {
+      promptTokens: 100,
+      completionTokens: 50,
+      totalTokens: 150,
+      isEstimated: false
+    }, { tokensSaved: 80 });
+
+    const data = tracker.getDashboardData('gemini', 'gemini-1.5-flash');
+    assert.ok(data.velocity, 'Dashboard data must contain velocity');
+    assert.strictEqual(data.velocity.rpm, 1);
+    assert.ok(data.efficiency, 'Dashboard data must contain efficiency');
+    assert.strictEqual(data.efficiency.tokensSaved, 80);
+    assert.ok(data.efficiency.savingsPercent > 0, 'Savings percentage must be computed');
+  });
+
   console.log('\n================================================================');
   console.log(`TOTAL NEW PROVIDER TESTS: ${passed + failed}`);
   console.log(`PASSED: ${passed}`);

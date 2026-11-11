@@ -282,6 +282,40 @@
             Estimated usage based on char ratio (provider reports exact tokens when supported).
           </div>
         </div>
+
+        <!-- Live Rate Limit Guard & Velocity Card -->
+        <div class="stat-card full-width velocity-card">
+          <div class="stat-title">API Limit Guard & Live Velocity</div>
+          <div class="health-row" style="margin: 4px 0;">
+            <div id="dash-velocity-status" class="cooldown-badge normal">Optimal (100% Headroom)</div>
+            <div id="dash-velocity-desc" class="stat-sub">Standard Tier</div>
+          </div>
+          <div class="tokens-split-row" style="margin-top: 8px;">
+            <span class="token-chip" style="background: rgba(56, 189, 248, 0.1); border-color: rgba(56, 189, 248, 0.3); color: #38bdf8;">
+              RPM: <strong id="dash-rpm">0</strong> / <span id="dash-max-rpm">30</span>
+            </span>
+            <span class="token-chip" style="background: rgba(168, 85, 247, 0.1); border-color: rgba(168, 85, 247, 0.3); color: #c084fc;">
+              TPM: <strong id="dash-tpm">0</strong> / <span id="dash-max-tpm">6,000</span>
+            </span>
+          </div>
+          <div class="stat-sub token-hint" style="margin-top: 8px;">
+            Sliding 60-second window. Automatically paces requests to prevent HTTP 429 rate limits.
+          </div>
+        </div>
+
+        <!-- Token Efficiency & Quota Savings Card -->
+        <div class="stat-card full-width savings-card">
+          <div class="stat-title">Token Efficiency & Savings</div>
+          <div style="display: flex; align-items: baseline; gap: 10px; margin: 4px 0;">
+            <div id="dash-tokens-saved" class="stat-value" style="color: #4ade80;">0</div>
+            <span id="dash-savings-badge" class="token-chip" style="background: rgba(74, 222, 128, 0.1); border-color: rgba(74, 222, 128, 0.3); color: #4ade80; font-size: 11px;">
+              0% tokens saved
+            </span>
+          </div>
+          <div class="stat-sub token-hint" style="margin-top: 8px;">
+            Tokens saved via intelligent prompt compaction & concise formatting while ensuring accurate results.
+          </div>
+        </div>
       </div>
 
       <div class="action-row" style="margin-top: 14px;">

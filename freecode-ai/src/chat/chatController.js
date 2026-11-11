@@ -218,9 +218,10 @@ class ChatController {
       model: this.activeModel
     });
 
-    // 4. Prepare conversation context
+    // 4. Prepare conversation context with intelligent token compaction
     const rawHistory = this.messageManager.getMessages();
     const preparedMessages = PromptBuilder.prepareMessages(rawHistory);
+    const tokensSaved = preparedMessages.tokensSaved || 0;
     const systemPrompt = PromptBuilder.getSystemPrompt();
 
     // 5. Create Provider Instance
@@ -230,16 +231,25 @@ class ChatController {
       endpoint
     });
 
-    // 6. Record Request Start
+    // 6. Record Request Start with velocity tracking & proactive pacing
     if (this.usageTracker) {
-      await this.usageTracker.recordRequestStart(this.activeProvider, this.activeModel);
+      const estPromptTokens = PromptBuilder.estimateTokenCount(trimmed);
+      await this.usageTracker.recordRequestStart(this.activeProvider, this.activeModel, {
+        estimatedTokens: estPromptTokens
+      });
+
+      // Proactive rate-limit pacing: if nearing rate limit (>80% capacity in 60s window), pace briefly
+      if (typeof this.usageTracker.isNearingRateLimit === 'function' && this.usageTracker.isNearingRateLimit(this.activeProvider)) {
+        await new Promise(r => setTimeout(r, 500));
+      }
     }
 
     // 7. Execute Request with error tracking
     try {
       const response = await providerInstance.complete(preparedMessages, {
         systemPrompt,
-        model: this.activeModel
+        model: this.activeModel,
+        maxTokens: 2048
       });
 
       if (!response || typeof response.text !== 'string' || response.text.trim().length === 0) {
@@ -253,7 +263,8 @@ class ChatController {
         await this.usageTracker.recordSuccess(
           this.activeProvider,
           this.activeModel,
-          response.usage
+          response.usage,
+          { tokensSaved }
         );
       }
       if (this.providerManager) {
