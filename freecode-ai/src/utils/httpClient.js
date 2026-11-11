@@ -3,11 +3,12 @@
  */
 
 class HttpError extends Error {
-  constructor(message, status, data) {
+  constructor(message, status, data, headers = null) {
     super(message);
     this.name = 'HttpError';
     this.status = status;
     this.data = data;
+    this.headers = headers;
   }
 }
 
@@ -24,6 +25,7 @@ async function request(url, options = {}, timeoutMs = 30000) {
 
   try {
     const headers = {
+      'Accept': 'application/json, text/plain, */*',
       'Content-Type': 'application/json',
       ...(options.headers || {})
     };
@@ -36,24 +38,35 @@ async function request(url, options = {}, timeoutMs = 30000) {
 
     clearTimeout(timeoutId);
 
-    const isJson = (response.headers.get('content-type') || '').includes('application/json');
-    const data = isJson ? await response.json() : await response.text();
+    const rawText = await response.text();
+    let data;
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      data = rawText;
+    }
 
     if (!response.ok) {
       let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
       if (typeof data === 'object' && data !== null) {
-        if (data.error) {
+        if (typeof data.detail === 'string') {
+          errorMessage = data.detail;
+        } else if (data.error) {
           errorMessage = typeof data.error === 'string' 
             ? data.error 
             : data.error.message || JSON.stringify(data.error);
         } else if (data.message) {
           errorMessage = data.message;
+        } else if (data.title) {
+          errorMessage = data.title;
+        } else if (data.detail) {
+          errorMessage = JSON.stringify(data.detail);
         }
       } else if (typeof data === 'string' && data.length < 500) {
         errorMessage = data;
       }
 
-      throw new HttpError(errorMessage, response.status, data);
+      throw new HttpError(errorMessage, response.status, data, response.headers);
     }
 
     return data;

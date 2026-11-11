@@ -158,9 +158,11 @@ class UsageTracker {
    */
   async reset(providerId = null) {
     await this.storage.reset(providerId);
-    if (providerId) {
-      this.limitTracker.clearCooldown(providerId);
-    }
+    this.limitTracker.clearCooldown(providerId);
+  }
+
+  clearCooldown(providerId = null) {
+    this.limitTracker.clearCooldown(providerId);
   }
 }
 

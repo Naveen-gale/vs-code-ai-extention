@@ -71,6 +71,9 @@ class UsageStorage {
    * @param {string} providerId
    */
   getProviderStats(providerId) {
+    if (!providerId) {
+      return this._getEmptyStats();
+    }
     const id = providerId.toLowerCase();
     if (!this.cache.providers[id]) {
       this.cache.providers[id] = this._getEmptyStats();
@@ -84,6 +87,9 @@ class UsageStorage {
    * @param {string} modelId
    */
   getModelStats(providerId, modelId) {
+    if (!providerId || !modelId) {
+      return this._getEmptyModelStats();
+    }
     const provider = this.getProviderStats(providerId);
     if (!provider.models[modelId]) {
       provider.models[modelId] = this._getEmptyModelStats();

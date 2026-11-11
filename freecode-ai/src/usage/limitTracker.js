@@ -32,9 +32,10 @@ class LimitTracker {
     const msg = (error?.message || '').toLowerCase();
     const dataStr = error?.data ? JSON.stringify(error.data).toLowerCase() : '';
 
+    const effectiveHeaders = headers || error?.headers || null;
     const combined = `${msg} ${dataStr}`;
     let category = ErrorCategory.UNKNOWN;
-    let retryAfterSeconds = this._extractRetryAfter(headers);
+    let retryAfterSeconds = this._extractRetryAfter(effectiveHeaders);
 
     if (status === 429 || combined.includes('rate limit') || combined.includes('rate_limit') || combined.includes('too many requests')) {
       if (combined.includes('quota') || combined.includes('insufficient_quota') || combined.includes('exceeded your current quota') || combined.includes('billing')) {
@@ -47,7 +48,7 @@ class LimitTracker {
       }
     } else if (status === 401 || combined.includes('invalid api key') || combined.includes('api key not valid') || combined.includes('unauthorized') || combined.includes('authentication')) {
       category = ErrorCategory.INVALID_API_KEY;
-    } else if (status === 403 || combined.includes('permission denied') || combined.includes('forbidden') || combined.includes('access denied')) {
+    } else if (status === 403 || combined.includes('permission denied') || combined.includes('forbidden') || combined.includes('access denied') || combined.includes('not found for account')) {
       category = ErrorCategory.PERMISSION_DENIED;
     } else if (status === 404 || combined.includes('model not found') || combined.includes('does not exist')) {
       category = ErrorCategory.MODEL_NOT_FOUND;
@@ -70,19 +71,33 @@ class LimitTracker {
   _extractRetryAfter(headers) {
     if (!headers) return null;
 
-    let headerVal = null;
-    if (typeof headers.get === 'function') {
-      headerVal = headers.get('retry-after') || headers.get('Retry-After');
-    } else if (typeof headers === 'object') {
-      headerVal = headers['retry-after'] || headers['Retry-After'];
-    }
+    const getVal = (name) => {
+      if (typeof headers.get === 'function') {
+        return headers.get(name) || headers.get(name.toLowerCase());
+      } else if (typeof headers === 'object') {
+        return headers[name] || headers[name.toLowerCase()];
+      }
+      return null;
+    };
+
+    // Check multiple standard and provider-specific rate limit headers (Mistral, Groq, Cohere, Cloudflare, OpenAI)
+    const headerVal = getVal('retry-after') ||
+      getVal('x-ratelimit-reset-requests') ||
+      getVal('x-ratelimit-reset-tokens') ||
+      getVal('x-ratelimit-reset') ||
+      getVal('ratelimit-reset');
 
     if (!headerVal) return null;
 
-    // Could be seconds or HTTP date
-    const parsedSec = parseInt(headerVal, 10);
+    // Check if seconds or epoch timestamp
+    const parsedSec = parseFloat(headerVal);
     if (!isNaN(parsedSec)) {
-      return parsedSec;
+      // If epoch timestamp in seconds (e.g., 1700000000)
+      if (parsedSec > 1000000000) {
+        const delta = Math.max(1, Math.ceil((parsedSec * 1000 - Date.now()) / 1000));
+        return delta;
+      }
+      return Math.max(1, Math.ceil(parsedSec));
     }
 
     const parsedDate = Date.parse(headerVal);
@@ -95,6 +110,19 @@ class LimitTracker {
   }
 
   /**
+   * Reset / clear cooldown for a provider or all providers.
+   * Useful when an API key is updated or rate limit is cleared.
+   * @param {string|null} [providerId]
+   */
+  clearCooldown(providerId = null) {
+    if (providerId) {
+      this.cooldowns.delete(providerId.toLowerCase());
+    } else {
+      this.cooldowns.clear();
+    }
+  }
+
+  /**
    * Set a cooldown period for a provider.
    * @param {string} providerId
    * @param {number} seconds
@@ -102,6 +130,7 @@ class LimitTracker {
    * @param {string} category
    */
   setCooldown(providerId, seconds, reason = 'Rate limited', category = ErrorCategory.RATE_LIMIT) {
+    if (!providerId) return;
     const duration = Math.max(5, seconds || 60);
     const expiresAt = Date.now() + duration * 1000;
     this.cooldowns.set(providerId.toLowerCase(), {
@@ -117,6 +146,7 @@ class LimitTracker {
    * @returns {boolean}
    */
   isCoolingDown(providerId) {
+    if (!providerId) return false;
     const info = this.getCooldownInfo(providerId);
     return info.active;
   }
@@ -127,6 +157,9 @@ class LimitTracker {
    * @returns {{ active: boolean, remainingSeconds: number, reason: string|null, category: string|null }}
    */
   getCooldownInfo(providerId) {
+    if (!providerId) {
+      return { active: false, remainingSeconds: 0, reason: null, category: null };
+    }
     const entry = this.cooldowns.get(providerId.toLowerCase());
     if (!entry) {
       return { active: false, remainingSeconds: 0, reason: null, category: null };
@@ -150,7 +183,11 @@ class LimitTracker {
    * Clear cooldown for a provider manually.
    * @param {string} providerId
    */
-  clearCooldown(providerId) {
+  clearCooldown(providerId = null) {
+    if (!providerId) {
+      this.cooldowns.clear();
+      return;
+    }
     this.cooldowns.delete(providerId.toLowerCase());
   }
 }

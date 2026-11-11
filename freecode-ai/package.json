@@ -22,7 +22,8 @@
     "onCommand:freecodeAI.deleteProvider",
     "onCommand:freecodeAI.newChat",
     "onCommand:freecodeAI.openDashboard",
-    "onCommand:freecodeAI.simulateFailover"
+    "onCommand:freecodeAI.simulateFailover",
+    "onCommand:freecodeAI.resetRateLimits"
   ],
   "contributes": {
     "viewsContainers": {
@@ -75,10 +76,14 @@
       {
         "command": "freecodeAI.simulateFailover",
         "title": "FreeCode AI: Test Rate Limit / Failover Switch"
+      },
+      {
+        "command": "freecodeAI.resetRateLimits",
+        "title": "FreeCode AI: Reset Rate Limit Cooldowns"
       }
     ]
   },
   "scripts": {
-    "test": "node ./test/day1.test.js && node ./test/upgrade.test.js && node ./test/multiProvider.test.js && node ./test/day2Ui.test.js"
+    "test": "node ./test/day1.test.js && node ./test/upgrade.test.js && node ./test/multiProvider.test.js && node ./test/day2Ui.test.js && node ./test/newProviders.test.js"
   }
 }

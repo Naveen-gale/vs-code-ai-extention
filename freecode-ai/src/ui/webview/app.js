@@ -37,6 +37,8 @@
   const modalMaskedKey = document.getElementById('modal-masked-key');
   const modalApiKeyLink = document.getElementById('modal-api-key-link');
   const modalGroupEndpoint = document.getElementById('modal-group-endpoint');
+  const modalEndpointLabel = document.getElementById('modal-endpoint-label');
+  const modalEndpointHint = document.getElementById('modal-endpoint-hint');
   const modalEndpointInput = document.getElementById('modal-endpoint-input');
   const modalBtnSaveTestConn = document.getElementById('modal-btn-save-test-conn');
   const modalBtnSelectModel = document.getElementById('modal-btn-select-model');
@@ -72,6 +74,7 @@
   const dashTokenType = document.getElementById('dash-token-type');
   const refreshDashboardBtn = document.getElementById('btn-refresh-dashboard');
   const resetUsageBtn = document.getElementById('btn-reset-usage');
+  const btnResetRateLimits = document.getElementById('btn-reset-rate-limits');
 
   // State
   let currentActiveProvider = null;
@@ -108,7 +111,14 @@
     gemini: 'https://aistudio.google.com/app/apikey',
     groq: 'https://console.groq.com/keys',
     openrouter: 'https://openrouter.ai/keys',
-    ollama: 'https://ollama.ai/'
+    ollama: 'https://ollama.ai/',
+    cohere: 'https://dashboard.cohere.com/api-keys',
+    cloudflare: 'https://dash.cloudflare.com/',
+    mistral: 'https://console.mistral.ai/api-keys/',
+    nvidia: 'https://build.nvidia.com/',
+    deepseek: 'https://platform.deepseek.com/api_keys',
+    huggingface: 'https://huggingface.co/settings/tokens',
+    openai: 'https://platform.openai.com/api-keys'
   };
 
   // 1. Navigation / Tab Switching
@@ -152,7 +162,12 @@
 
     const body = document.createElement('div');
     body.className = 'message-text';
-    body.textContent = msg.content;
+    if (msg.role === 'assistant' && (!msg.content || typeof msg.content !== 'string' || msg.content.trim().length === 0)) {
+      body.textContent = 'No response text received from provider. Please switch models or check your configuration.';
+      bubble.classList.add('error');
+    } else {
+      body.textContent = msg.content;
+    }
 
     bubble.appendChild(sender);
     bubble.appendChild(body);
@@ -183,7 +198,7 @@
     promptInput.value = '';
     promptInput.style.height = 'auto';
     sendBtn.disabled = true;
-    showTyping('FreeCode AI is thinking...');
+    showTyping('Thinking...');
   }
 
   function showTyping(label) {
@@ -197,31 +212,37 @@
     sendBtn.disabled = false;
   }
 
-  sendBtn.addEventListener('click', sendMessage);
+  if (sendBtn) sendBtn.addEventListener('click', sendMessage);
 
-  promptInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  });
+  if (promptInput) {
+    promptInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
 
-  promptInput.addEventListener('input', () => {
-    promptInput.style.height = 'auto';
-    promptInput.style.height = Math.min(promptInput.scrollHeight, 120) + 'px';
-  });
+    promptInput.addEventListener('input', () => {
+      promptInput.style.height = 'auto';
+      promptInput.style.height = Math.min(promptInput.scrollHeight, 120) + 'px';
+    });
+  }
 
-  newChatBtn.addEventListener('click', () => {
-    if (vscode) {
-      vscode.postMessage({ command: 'newChat' });
-    }
-  });
+  if (newChatBtn) {
+    newChatBtn.addEventListener('click', () => {
+      if (vscode) {
+        vscode.postMessage({ command: 'newChat' });
+      }
+    });
+  }
 
-  clearChatBtn.addEventListener('click', () => {
-    if (vscode) {
-      vscode.postMessage({ command: 'clearChat' });
-    }
-  });
+  if (clearChatBtn) {
+    clearChatBtn.addEventListener('click', () => {
+      if (vscode) {
+        vscode.postMessage({ command: 'clearChat' });
+      }
+    });
+  }
 
   quickPromptButtons.forEach(btn => {
     btn.addEventListener('click', () => {
@@ -231,7 +252,6 @@
   });
 
   // 3. Multi-Provider Persistent Dashboard Logic
-
   function renderProvidersCards(providers) {
     cachedProvidersList = providers || [];
     providersCardsList.innerHTML = '';
@@ -239,18 +259,16 @@
     const configuredList = cachedProvidersList.filter(p => p.isConfigured);
 
     if (configuredList.length === 0) {
-      // Sync chat header: no providers exist, clear header pill
       currentActiveProvider = null;
       currentActiveModel = null;
       updateHeaderPill(null, null, null);
 
       providersCardsList.innerHTML = `
         <div class="empty-providers-box">
-          <div style="font-size: 28px; margin-bottom: 6px;">⚙️</div>
-          <h4>No AI Providers Configured</h4>
-          <p>You have deleted or haven't configured any AI providers yet.</p>
-          <button id="btn-empty-add-provider" class="primary-btn" style="width: auto; padding: 7px 18px; margin: 0 auto; display: inline-flex; align-items: center; gap: 6px;">
-            + Add / Set Up Provider
+          <h4>No Providers Configured</h4>
+          <p>Add an AI provider to start using FreeCode AI.</p>
+          <button id="btn-empty-add-provider" class="primary-btn btn-sm">
+            + Add Provider
           </button>
         </div>
       `;
@@ -263,7 +281,6 @@
       return;
     }
 
-    // Sync active provider from configured list
     const activeProv = configuredList.find(p => p.isActive);
     if (activeProv) {
       currentActiveProvider = activeProv.id;
@@ -285,8 +302,8 @@
       header.className = 'provider-card-header';
       header.innerHTML = `
         <div class="provider-card-title">
-          <span>${p.name.toUpperCase()}</span>
-          <span class="priority-tag" title="Failover Priority #${p.priority || 1}">Priority #${p.priority || 1}</span>
+          <span>${p.name}</span>
+          <span class="priority-tag" title="Failover Priority #${p.priority || 1}">#${p.priority || 1}</span>
           ${isAct ? '<span class="active-tag">Active</span>' : ''}
         </div>
         <span class="badge-status ${p.isConfigured ? 'configured' : 'unconfigured'}">
@@ -299,32 +316,26 @@
       const details = document.createElement('div');
       details.className = 'provider-card-details';
 
-      let connBadge = '';
-      if (p.connectionStatus === 'connected') {
-        connBadge = '<span class="badge-status connected">Connected</span>';
-      } else if (p.connectionStatus === 'error') {
-        connBadge = '<span class="badge-status error">Error</span>';
-      } else if (p.connectionStatus === 'configured') {
-        connBadge = '<span style="color:var(--vscode-descriptionForeground)">Configured</span>';
-      } else {
-        connBadge = '<span style="color:var(--vscode-descriptionForeground)">Not configured</span>';
-      }
+      let connText = 'Not configured';
+      if (p.connectionStatus === 'connected') connText = 'Connected';
+      else if (p.connectionStatus === 'error') connText = 'Error';
+      else if (p.connectionStatus === 'configured') connText = 'Configured';
 
       details.innerHTML = `
         <div class="detail-line">
-          <span class="detail-label">Status:</span>
-          <span>${p.status} (${connBadge})</span>
+          <span class="detail-label">Connection</span>
+          <span class="detail-val">${connText}</span>
         </div>
         <div class="detail-line">
-          <span class="detail-label">Failover Priority:</span>
-          <span class="detail-val" style="color:var(--vscode-textLink-foreground, #3794ff); font-weight:600;">Priority #${p.priority || 1} ${p.priority === 1 ? '(Primary)' : '(Fallback)'}</span>
+          <span class="detail-label">Priority</span>
+          <span class="detail-val">#${p.priority || 1} ${p.priority === 1 ? '(Primary)' : '(Fallback)'}</span>
         </div>
         <div class="detail-line">
-          <span class="detail-label">${p.requiresApiKey ? 'API Key:' : 'Endpoint:'}</span>
+          <span class="detail-label">${p.requiresApiKey ? 'API Key' : 'Endpoint'}</span>
           <span class="detail-val">${p.requiresApiKey ? (p.maskedKey || 'Not configured') : (p.endpoint || 'Default local')}</span>
         </div>
         <div class="detail-line">
-          <span class="detail-label">Model:</span>
+          <span class="detail-label">Model</span>
           <span class="detail-val" style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${p.selectedModel || 'Default'}</span>
         </div>
       `;
@@ -337,7 +348,7 @@
       if (isAct) {
         const actBtn = document.createElement('button');
         actBtn.className = 'card-btn active-btn';
-        actBtn.textContent = '✓ In Use';
+        actBtn.textContent = 'In Use';
         actions.appendChild(actBtn);
       } else {
         const useBtn = document.createElement('button');
@@ -353,7 +364,7 @@
 
       const manageBtn = document.createElement('button');
       manageBtn.className = 'card-btn manage-btn';
-      manageBtn.textContent = 'Manage';
+      manageBtn.textContent = 'Configure';
       manageBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         openManageModal(p.id);
@@ -362,7 +373,7 @@
 
       const removeBtn = document.createElement('button');
       removeBtn.className = 'card-btn remove-icon-btn';
-      removeBtn.innerHTML = '🗑️ Delete';
+      removeBtn.textContent = 'Delete';
       removeBtn.title = `Delete credentials and configuration for ${p.name}`;
       removeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -393,7 +404,7 @@
       confirmModalTitle.textContent = `Delete ${providerName}?`;
     }
     if (confirmModalMsg) {
-      confirmModalMsg.textContent = `Are you sure you want to remove credentials and settings for ${providerName}? Other saved providers will remain untouched.`;
+      confirmModalMsg.textContent = `Remove saved credentials and settings for ${providerName}? Other providers will remain untouched.`;
     }
     if (confirmModal) {
       confirmModal.style.display = 'flex';
@@ -429,18 +440,82 @@
           provider: provId
         });
       }
-      showGlobalAlert(`Deleting configuration for ${provId.toUpperCase()}...`, 'info');
+      showGlobalAlert(`Removed configuration for ${provId.toUpperCase()}.`, 'info');
     });
   }
 
-  btnAddProvider.addEventListener('click', () => {
-    openManageModal(null);
-  });
+  if (btnAddProvider) {
+    btnAddProvider.addEventListener('click', () => {
+      openManageModal(null);
+    });
+  }
+
+  const DEFAULT_MODELS = {
+    gemini: [
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Fast multimodal model', isFree: true },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Next-gen multimodal model', isFree: true },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Complex reasoning model', isFree: true }
+    ],
+    groq: [
+      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', description: 'Meta flagship model on Groq', isFree: true },
+      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', description: 'Fast lightweight model', isFree: true },
+      { id: 'deepseek-r1-distill-llama-70b', name: 'DeepSeek R1 Distill 70B', description: 'DeepSeek R1 reasoning on Groq', isFree: true },
+      { id: 'qwen-2.5-coder-32b', name: 'Qwen 2.5 Coder 32B', description: 'Specialized coding model', isFree: true }
+    ],
+    openrouter: [
+      { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B (Free)', description: 'Free tier instruction model', isFree: true },
+      { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash (Free)', description: 'Free experimental model', isFree: true },
+      { id: 'deepseek/deepseek-r1:free', name: 'DeepSeek R1 (Free)', description: 'DeepSeek R1 reasoning free tier', isFree: true },
+      { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Anthropic coding & reasoning model', isFree: false }
+    ],
+    ollama: [
+      { id: 'llama3:latest', name: 'Llama 3 (8B)', description: 'Default local Llama 3 model', isFree: true },
+      { id: 'qwen2.5-coder:latest', name: 'Qwen 2.5 Coder', description: 'Local coding model', isFree: true },
+      { id: 'deepseek-r1:latest', name: 'DeepSeek R1', description: 'Local DeepSeek R1 reasoning', isFree: true }
+    ],
+    cohere: [
+      { id: 'command-r-plus', name: 'Command R+', description: 'Cohere reasoning & code model', isFree: true },
+      { id: 'command-r', name: 'Command R', description: 'Fast scalable model', isFree: true }
+    ],
+    cloudflare: [
+      { id: '@cf/meta/llama-3.3-70b-instruct', name: '@cf/meta/llama-3.3-70b-instruct', description: 'Llama 3.3 70B on Workers AI', isFree: true },
+      { id: '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b', name: '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b', description: 'DeepSeek R1 on Workers AI', isFree: true },
+      { id: '@cf/qwen/qwen2.5-coder-32b-instruct', name: '@cf/qwen/qwen2.5-coder-32b-instruct', description: 'Qwen 2.5 Coder on Workers AI', isFree: true }
+    ],
+    mistral: [
+      { id: 'codestral-latest', name: 'Codestral Latest', description: 'Mistral coding model', isFree: false },
+      { id: 'mistral-large-latest', name: 'Mistral Large Latest', description: 'Mistral flagship reasoning model', isFree: false },
+      { id: 'mistral-small-latest', name: 'Mistral Small Latest', description: 'Fast lightweight model', isFree: false }
+    ],
+    nvidia: [
+      { id: 'meta/llama-3.3-70b-instruct', name: 'Llama 3.3 70B Instruct', description: 'Meta 70B on NVIDIA NIM', isFree: true },
+      { id: 'meta/llama-3.1-70b-instruct', name: 'Llama 3.1 70B Instruct', description: 'Meta 3.1 70B on NVIDIA NIM', isFree: true },
+      { id: 'meta/llama-3.1-8b-instruct', name: 'Llama 3.1 8B Instruct', description: 'Fast 8B model on NVIDIA NIM', isFree: true },
+      { id: 'deepseek-ai/deepseek-r1', name: 'DeepSeek R1', description: 'Reasoning and code generation', isFree: true },
+      { id: 'nvidia/llama-3.1-nemotron-70b-instruct', name: 'Nemotron 70B Instruct', description: 'NVIDIA tuned reasoning model', isFree: true },
+      { id: 'qwen/qwen2.5-coder-32b-instruct', name: 'Qwen 2.5 Coder 32B', description: 'Specialized code generation model', isFree: true },
+      { id: 'mistralai/mistral-large-2-instruct', name: 'Mistral Large 2', description: 'Multilingual reasoning and code', isFree: true }
+    ],
+    deepseek: [
+      { id: 'deepseek-chat', name: 'DeepSeek-V3', description: 'DeepSeek flagship chat & code model', isFree: false },
+      { id: 'deepseek-reasoner', name: 'DeepSeek-R1', description: 'DeepSeek reasoning model', isFree: false }
+    ],
+    huggingface: [
+      { id: 'meta-llama/Llama-3.2-3B-Instruct', name: 'Llama 3.2 3B Instruct', description: 'Fast model on HF Serverless', isFree: true },
+      { id: 'Qwen/Qwen2.5-Coder-32B-Instruct', name: 'Qwen 2.5 Coder 32B', description: 'Qwen 2.5 Coder on HF Serverless', isFree: true },
+      { id: 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B', name: 'DeepSeek R1 Distill 32B', description: 'DeepSeek R1 distilled on HF', isFree: true }
+    ],
+    openai: [
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Fast, lightweight OpenAI model', isFree: false },
+      { id: 'gpt-4o', name: 'GPT-4o', description: 'OpenAI flagship multimodal model', isFree: false },
+      { id: 'o3-mini', name: 'o3 Mini', description: 'OpenAI fast reasoning model', isFree: false },
+      { id: 'o1', name: 'o1', description: 'OpenAI full reasoning model', isFree: false }
+    ]
+  };
 
   // 4. Manage Modal Logic
   function openManageModal(providerId) {
     if (!providerId) {
-      // Find first unconfigured provider or default to gemini
       const unconfigured = cachedProvidersList.find(p => !p.isConfigured);
       providerId = unconfigured ? unconfigured.id : 'gemini';
     }
@@ -463,8 +538,21 @@
     modalApiKeyInput.value = '';
 
     const isOllama = providerId === 'ollama';
+    const isCloudflare = providerId === 'cloudflare';
+    const isNvidia = providerId === 'nvidia';
     modalGroupKey.style.display = isOllama ? 'none' : 'flex';
-    modalGroupEndpoint.style.display = isOllama ? 'flex' : 'none';
+    modalGroupEndpoint.style.display = (isOllama || isCloudflare || isNvidia) ? 'flex' : 'none';
+
+    if (modalEndpointLabel) {
+      if (isCloudflare) modalEndpointLabel.textContent = 'Cloudflare Account ID (Optional)';
+      else if (isNvidia) modalEndpointLabel.textContent = 'NVIDIA NIM Base URL (Optional)';
+      else modalEndpointLabel.textContent = 'Ollama Server Endpoint';
+    }
+    if (modalEndpointHint) {
+      if (isCloudflare) modalEndpointHint.textContent = 'Enter your 32-char Account ID or custom gateway URL.';
+      else if (isNvidia) modalEndpointHint.textContent = 'Default: https://integrate.api.nvidia.com/v1';
+      else modalEndpointHint.textContent = "Default local server endpoint. Ensure 'ollama serve' is running.";
+    }
 
     modalMaskedKey.textContent = providerInfo.maskedKey || 'Not configured';
 
@@ -473,15 +561,26 @@
       modalApiKeyLink.style.display = isOllama ? 'none' : 'inline';
     }
 
-    if (isOllama && modalEndpointInput) {
-      modalEndpointInput.value = providerInfo.endpoint || 'http://127.0.0.1:11434';
+    if (modalEndpointInput) {
+      if (isCloudflare) {
+        modalEndpointInput.placeholder = '0123456789abcdef0123456789abcdef';
+        modalEndpointInput.value = providerInfo.endpoint || '';
+      } else if (isNvidia) {
+        modalEndpointInput.placeholder = 'https://integrate.api.nvidia.com/v1';
+        modalEndpointInput.value = providerInfo.endpoint || '';
+      } else if (isOllama) {
+        modalEndpointInput.placeholder = 'http://127.0.0.1:11434';
+        modalEndpointInput.value = providerInfo.endpoint || 'http://127.0.0.1:11434';
+      }
     }
 
     if (modalPrioritySelect) {
       modalPrioritySelect.value = String(providerInfo.priority || 1);
     }
 
-    // Request available models for this provider
+    const initialModels = DEFAULT_MODELS[providerId] || [];
+    populateModalModels(initialModels, providerInfo.selectedModel || (initialModels[0] ? initialModels[0].id : null));
+
     if (vscode) {
       vscode.postMessage({
         command: 'fetchModels',
@@ -523,21 +622,22 @@
     modalTargetProvider = null;
   }
 
-  btnCloseModal.addEventListener('click', closeManageModal);
-  manageModal.addEventListener('click', (e) => {
-    if (e.target === manageModal) closeManageModal();
-  });
+  if (btnCloseModal) btnCloseModal.addEventListener('click', closeManageModal);
+  if (manageModal) {
+    manageModal.addEventListener('click', (e) => {
+      if (e.target === manageModal) closeManageModal();
+    });
+  }
 
   function handleSaveAndTestConnection() {
     if (!modalTargetProvider) return;
 
     const providerInfo = cachedProvidersList.find(p => p.id === modalTargetProvider);
-
     const priorityVal = modalPrioritySelect ? Number(modalPrioritySelect.value) : 1;
 
     if (modalTargetProvider === 'ollama') {
       const endpoint = (modalEndpointInput && modalEndpointInput.value.trim()) || 'http://127.0.0.1:11434';
-      showModalAlert('Saving endpoint & testing Ollama connection...', 'info');
+      showModalAlert('Saving endpoint and testing connection...', 'info');
       if (vscode) {
         vscode.postMessage({
           command: 'saveAndTestConnection',
@@ -548,25 +648,30 @@
       }
     } else {
       const key = modalApiKeyInput ? modalApiKeyInput.value.trim() : '';
-      const isAlreadyConfigured = providerInfo && providerInfo.isConfigured;
+      const isAlreadyConfigured = Boolean(
+        (providerInfo && providerInfo.isConfigured) ||
+        (providerInfo && providerInfo.maskedKey && providerInfo.maskedKey !== 'Not configured')
+      );
 
       if (!key && !isAlreadyConfigured) {
-        showModalAlert(`Please enter an API key for ${modalTargetProvider.toUpperCase()} before testing.`, 'error');
+        showModalAlert(`Please enter an API key for ${modalTargetProvider.toUpperCase()}.`, 'error');
         return;
       }
 
-      showModalAlert(`Saving credentials & testing connection for ${modalTargetProvider.toUpperCase()}...`, 'info');
+      const endpointVal = ((modalTargetProvider === 'cloudflare' || modalTargetProvider === 'nvidia') && modalEndpointInput)
+        ? (modalEndpointInput.value.trim() || undefined)
+        : undefined;
+
+      showModalAlert(`Testing connection for ${modalTargetProvider.toUpperCase()}...`, 'info');
 
       if (vscode) {
         vscode.postMessage({
           command: 'saveAndTestConnection',
           provider: modalTargetProvider,
           apiKey: key || undefined,
+          endpoint: endpointVal,
           priority: priorityVal
         });
-      }
-      if (key && modalApiKeyInput) {
-        modalApiKeyInput.value = '';
       }
     }
   }
@@ -575,8 +680,13 @@
     if (!modalTargetProvider) return;
 
     const providerInfo = cachedProvidersList.find(p => p.id === modalTargetProvider);
-    const selectedModel = modalModelSelect ? modalModelSelect.value : null;
+    let selectedModel = modalModelSelect ? modalModelSelect.value : null;
     const priorityVal = modalPrioritySelect ? Number(modalPrioritySelect.value) : 1;
+
+    if (!selectedModel || selectedModel.startsWith('Loading')) {
+      const defaults = DEFAULT_MODELS[modalTargetProvider] || [];
+      selectedModel = defaults.length > 0 ? defaults[0].id : null;
+    }
 
     if (!selectedModel) {
       showModalAlert('Please select a model from the list.', 'error');
@@ -595,17 +705,27 @@
           activate: true
         });
       }
-      showGlobalAlert(`Activated Ollama (${selectedModel}) for chat!`, 'success');
+      currentActiveProvider = 'ollama';
+      currentActiveModel = selectedModel;
+      updateHeaderPill('ollama', selectedModel, 'Ollama');
+      showGlobalAlert(`Activated Ollama (${selectedModel}).`, 'success');
       closeManageModal();
       switchTab('chat');
     } else {
       const key = modalApiKeyInput ? modalApiKeyInput.value.trim() : '';
-      const isAlreadyConfigured = providerInfo && providerInfo.isConfigured;
+      const isAlreadyConfigured = Boolean(
+        (providerInfo && providerInfo.isConfigured) ||
+        (providerInfo && providerInfo.maskedKey && providerInfo.maskedKey !== 'Not configured')
+      );
 
       if (!key && !isAlreadyConfigured) {
         showModalAlert(`Please enter an API key for ${modalTargetProvider.toUpperCase()} first.`, 'error');
         return;
       }
+
+      const endpointVal = ((modalTargetProvider === 'cloudflare' || modalTargetProvider === 'nvidia') && modalEndpointInput)
+        ? (modalEndpointInput.value.trim() || undefined)
+        : undefined;
 
       if (key) {
         if (vscode) {
@@ -613,39 +733,37 @@
             command: 'saveApiKey',
             provider: modalTargetProvider,
             apiKey: key,
+            endpoint: endpointVal,
             model: selectedModel,
             priority: priorityVal,
             activate: true
           });
         }
-        if (modalApiKeyInput) modalApiKeyInput.value = '';
       } else {
         if (vscode) {
           vscode.postMessage({
             command: 'selectModel',
             provider: modalTargetProvider,
             model: selectedModel,
+            endpoint: endpointVal,
             priority: priorityVal,
             activate: true
-          });
-          vscode.postMessage({
-            command: 'switchProvider',
-            provider: modalTargetProvider
           });
         }
       }
 
-      showGlobalAlert(`Activated ${modalTargetProvider.toUpperCase()} (${selectedModel}) for chat!`, 'success');
+      if (providerInfo) {
+        providerInfo.isConfigured = true;
+        providerInfo.selectedModel = selectedModel;
+      }
+      currentActiveProvider = modalTargetProvider;
+      currentActiveModel = selectedModel;
+      const provName = providerInfo ? providerInfo.name : modalTargetProvider.toUpperCase();
+      updateHeaderPill(currentActiveProvider, currentActiveModel, provName);
+
+      showGlobalAlert(`Activated ${provName} (${selectedModel}).`, 'success');
       closeManageModal();
       switchTab('chat');
-    }
-  }
-
-  function handleSaveCredentials(activate) {
-    if (activate) {
-      handleSelectThisModel();
-    } else {
-      handleSaveAndTestConnection();
     }
   }
 
@@ -657,51 +775,78 @@
     modalBtnSelectModel.addEventListener('click', handleSelectThisModel);
   }
 
-  // Compatibility bindings for legacy / alias buttons
-  if (modalBtnTestConn) {
-    modalBtnTestConn.addEventListener('click', handleSaveAndTestConnection);
-  }
-  if (modalBtnSaveOnly) {
-    modalBtnSaveOnly.addEventListener('click', handleSaveAndTestConnection);
-  }
-  if (modalBtnSaveSelectModel) {
-    modalBtnSaveSelectModel.addEventListener('click', handleSelectThisModel);
-  }
-  if (modalBtnSaveKey) {
-    modalBtnSaveKey.addEventListener('click', handleSaveAndTestConnection);
-  }
-  if (modalBtnApplyModel) {
-    modalBtnApplyModel.addEventListener('click', handleSelectThisModel);
-  }
-  if (modalBtnUseNow) {
-    modalBtnUseNow.addEventListener('click', handleSelectThisModel);
-  }
+  // Compatibility bindings
+  if (modalBtnTestConn) modalBtnTestConn.addEventListener('click', handleSaveAndTestConnection);
+  if (modalBtnSaveOnly) modalBtnSaveOnly.addEventListener('click', handleSaveAndTestConnection);
+  if (modalBtnSaveSelectModel) modalBtnSaveSelectModel.addEventListener('click', handleSelectThisModel);
+  if (modalBtnSaveKey) modalBtnSaveKey.addEventListener('click', handleSaveAndTestConnection);
+  if (modalBtnApplyModel) modalBtnApplyModel.addEventListener('click', handleSelectThisModel);
+  if (modalBtnUseNow) modalBtnUseNow.addEventListener('click', handleSelectThisModel);
 
-  modalBtnRefreshModels.addEventListener('click', () => {
-    if (!modalTargetProvider) return;
-    if (vscode) {
-      vscode.postMessage({
-        command: 'fetchModels',
-        provider: modalTargetProvider
-      });
-    }
-  });
-
-  modalBtnRemove.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (!modalTargetProvider) return;
-    const target = cachedProvidersList.find(p => p.id === modalTargetProvider);
-    const name = target ? target.name : modalTargetProvider.toUpperCase();
-    showDeleteConfirmation(modalTargetProvider, name);
-  });
-
-  if (modalBtnUseNow) {
-    modalBtnUseNow.addEventListener('click', () => {
+  if (modalBtnRefreshModels) {
+    modalBtnRefreshModels.addEventListener('click', () => {
       if (!modalTargetProvider) return;
-      switchActiveProvider(modalTargetProvider);
-      closeManageModal();
-      switchTab('chat');
+      const keyVal = modalApiKeyInput ? modalApiKeyInput.value.trim() : '';
+      const endpointVal = ((modalTargetProvider === 'cloudflare' || modalTargetProvider === 'nvidia' || modalTargetProvider === 'ollama') && modalEndpointInput)
+        ? modalEndpointInput.value.trim()
+        : undefined;
+
+      if (modalModelSelect) {
+        modalModelSelect.innerHTML = '<option value="" disabled selected>Loading models...</option>';
+      }
+      if (modalModelDesc) {
+        modalModelDesc.textContent = 'Refreshing models from provider...';
+      }
+
+      if (vscode) {
+        vscode.postMessage({
+          command: 'fetchModels',
+          provider: modalTargetProvider,
+          apiKey: keyVal || undefined,
+          endpoint: endpointVal
+        });
+      }
     });
+  }
+
+  if (modalBtnRemove) {
+    modalBtnRemove.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!modalTargetProvider) return;
+      const target = cachedProvidersList.find(p => p.id === modalTargetProvider);
+      const name = target ? target.name : modalTargetProvider.toUpperCase();
+      showDeleteConfirmation(modalTargetProvider, name);
+    });
+  }
+
+  let apiKeyFetchTimer = null;
+  if (modalApiKeyInput) {
+    modalApiKeyInput.addEventListener('input', () => {
+      const keyVal = modalApiKeyInput.value.trim();
+      if (keyVal.length >= 6 && modalTargetProvider && vscode) {
+        clearTimeout(apiKeyFetchTimer);
+        apiKeyFetchTimer = setTimeout(() => {
+          vscode.postMessage({
+            command: 'fetchModels',
+            provider: modalTargetProvider,
+            apiKey: keyVal
+          });
+        }, 600);
+      }
+    });
+  }
+
+  function getModelPricingTag(model, providerId) {
+    if (model.isFree === true) return 'Free';
+    if (model.isFree === false) return 'Paid';
+
+    const pId = providerId || modalTargetProvider;
+    if (pId === 'mistral' || pId === 'deepseek' || pId === 'openai') return 'Paid';
+    if (pId === 'ollama' || pId === 'gemini' || pId === 'groq' || pId === 'cloudflare' || pId === 'cohere' || pId === 'nvidia' || pId === 'huggingface') return 'Free';
+    if (pId === 'openrouter') {
+      return (model.id && model.id.endsWith(':free')) ? 'Free' : 'Paid';
+    }
+    return model.isFree ? 'Free' : 'Paid';
   }
 
   function populateModalModels(models, activeModelId) {
@@ -711,7 +856,10 @@
     modalModels.forEach(m => {
       const opt = document.createElement('option');
       opt.value = m.id;
-      opt.textContent = `${m.name || m.id}${m.isFree ? ' (Free Tier)' : ''}`;
+      const tag = getModelPricingTag(m, modalTargetProvider);
+      const rawName = m.name || m.id;
+      const cleanName = rawName.replace(/\s*\((Free|Paid)[^)]*\)$/i, '').trim();
+      opt.textContent = `${cleanName} (${tag})`;
       if (m.id === activeModelId) {
         opt.selected = true;
       }
@@ -722,53 +870,79 @@
   }
 
   function updateModalModelDesc() {
+    if (!modalModelSelect || !modalModelDesc) return;
     const selectedId = modalModelSelect.value;
     const found = modalModels.find(m => m.id === selectedId);
-    if (found && found.description) {
-      modalModelDesc.textContent = found.description;
+    if (found) {
+      const tag = getModelPricingTag(found, modalTargetProvider);
+      const badge = tag === 'Free' ? '🟢 Free Model' : '💳 Paid Model';
+      const desc = found.description ? ` · ${found.description}` : '';
+      modalModelDesc.textContent = `${badge}${desc}`;
     } else {
       modalModelDesc.textContent = '';
     }
   }
 
-  modalModelSelect.addEventListener('change', updateModalModelDesc);
+  if (modalModelSelect) {
+    modalModelSelect.addEventListener('change', updateModalModelDesc);
+  }
 
   function showModalAlert(msg, type) {
-    modalStatusAlert.textContent = msg;
-    modalStatusAlert.className = `status-alert ${type}`;
-    modalStatusAlert.style.display = 'block';
+    if (modalStatusAlert) {
+      modalStatusAlert.textContent = msg;
+      modalStatusAlert.className = `status-alert ${type}`;
+      modalStatusAlert.style.display = 'block';
+    }
   }
 
   function showGlobalAlert(msg, type) {
-    globalProviderAlert.textContent = msg;
-    globalProviderAlert.className = `status-alert ${type}`;
-    globalProviderAlert.style.display = 'block';
-    setTimeout(() => {
-      globalProviderAlert.style.display = 'none';
-    }, 4000);
+    if (globalProviderAlert) {
+      globalProviderAlert.textContent = msg;
+      globalProviderAlert.className = `status-alert ${type}`;
+      globalProviderAlert.style.display = 'block';
+      setTimeout(() => {
+        globalProviderAlert.style.display = 'none';
+      }, 4000);
+    }
   }
 
   // 5. Dashboard Logic
   function requestDashboardData() {
     if (vscode) {
+      const selectedProv = dashProviderSelect ? dashProviderSelect.value : 'current';
       vscode.postMessage({
         command: 'getDashboardData',
-        provider: dashProviderSelect.value
+        provider: selectedProv
       });
     }
   }
 
-  dashProviderSelect.addEventListener('change', requestDashboardData);
-  refreshDashboardBtn.addEventListener('click', requestDashboardData);
+  if (dashProviderSelect) dashProviderSelect.addEventListener('change', requestDashboardData);
+  if (refreshDashboardBtn) refreshDashboardBtn.addEventListener('click', requestDashboardData);
 
-  resetUsageBtn.addEventListener('click', () => {
-    if (vscode) {
-      vscode.postMessage({
-        command: 'resetUsage',
-        provider: dashProviderSelect.value === 'current' ? currentActiveProvider : dashProviderSelect.value
-      });
-    }
-  });
+  if (resetUsageBtn) {
+    resetUsageBtn.addEventListener('click', () => {
+      if (vscode) {
+        const selectedProv = dashProviderSelect ? dashProviderSelect.value : 'current';
+        vscode.postMessage({
+          command: 'resetUsage',
+          provider: selectedProv === 'current' ? currentActiveProvider : selectedProv
+        });
+      }
+    });
+  }
+
+  if (btnResetRateLimits) {
+    btnResetRateLimits.addEventListener('click', () => {
+      if (vscode) {
+        const selectedProv = dashProviderSelect ? dashProviderSelect.value : 'current';
+        vscode.postMessage({
+          command: 'resetRateLimits',
+          provider: selectedProv === 'current' ? currentActiveProvider : selectedProv
+        });
+      }
+    });
+  }
 
   function renderDashboard(data) {
     if (!data) return;
@@ -777,17 +951,16 @@
     const tokens = stats.tokens || { prompt: 0, completion: 0, total: 0, reported: 0, estimated: 0 };
     const cooldown = data.cooldown || { active: false };
 
-    // Cooldown
     if (cooldown.active) {
       dashCooldown.className = 'cooldown-badge cooling';
-      dashCooldown.textContent = `⏳ Cooling Down (${cooldown.remainingSeconds}s left)`;
+      dashCooldown.textContent = `Cooldown (${cooldown.remainingSeconds}s remaining)`;
     } else {
       dashCooldown.className = 'cooldown-badge normal';
-      dashCooldown.textContent = '● Ready / Normal';
+      dashCooldown.textContent = 'Ready';
     }
 
     dashLastReq.textContent = stats.lastSuccessfulRequest
-      ? `Last success: ${new Date(stats.lastSuccessfulRequest).toLocaleTimeString()}`
+      ? `Last request: ${new Date(stats.lastSuccessfulRequest).toLocaleTimeString()}`
       : 'Last request: None';
 
     const totalReqs = stats.totalRequests || 0;
@@ -795,7 +968,7 @@
     const rate = totalReqs > 0 ? Math.round((successReqs / totalReqs) * 100) : 100;
 
     dashTotalReqs.textContent = totalReqs;
-    dashSuccessRate.textContent = `${rate}% success rate (${successReqs} passed)`;
+    dashSuccessRate.textContent = `${rate}% success (${successReqs} passed)`;
 
     dashRateLimits.textContent = stats.rateLimitErrors || 0;
     dashFailedReqs.textContent = `${stats.failedRequests || 0} failed requests`;
@@ -895,39 +1068,47 @@
       case 'modelsUpdated':
         if (modalTargetProvider === msg.provider || !modalTargetProvider) {
           populateModalModels(msg.models, msg.activeModel);
+          const count = Array.isArray(msg.models) ? msg.models.length : 0;
+          if (count > 0 && modalStatusAlert && !modalStatusAlert.classList.contains('error')) {
+            showModalAlert(`Connection verified. ${count} models loaded from ${msg.provider.toUpperCase()}.`, 'success');
+          }
         }
         break;
 
       case 'fallbackSuggestion': {
-        const { failedProvider, reason, fallbackProvider, pendingPrompt } = msg;
+        const { failedProvider, reason, fallbackProvider, pendingPrompt, isRateLimit } = msg;
         if (!fallbackProvider) break;
+
+        const headerTitle = isRateLimit
+          ? `${failedProvider.name} Rate Limited`
+          : `${failedProvider.name} Request Failed`;
 
         const box = document.createElement('div');
         box.className = 'fallback-prompt-box';
         box.innerHTML = `
           <div class="fallback-prompt-header">
-            <span style="font-weight: 700; color: var(--vscode-errorForeground, #f48771); display: flex; align-items: center; gap: 4px;">
-              ⚠️ ${failedProvider.name} Failed / Rate Limited
+            <span style="font-weight: 600; color: var(--danger);">
+              ${headerTitle}
             </span>
-            <span class="badge-status error" style="font-size: 10px;">Failover Available</span>
+            <span class="badge-status error">Failover Available</span>
           </div>
-          <div style="font-size: 11px; margin: 4px 0 8px 0; color: var(--vscode-foreground); opacity: 0.9;">
+          <div style="font-size: 11px; color: var(--text-muted);">
             ${reason}
           </div>
-          <div style="background: rgba(0,0,0,0.15); padding: 8px; border-radius: 4px; margin-bottom: 8px; font-size: 11px;">
-            <div style="color: var(--vscode-descriptionForeground); margin-bottom: 3px;">Next in User Priority Order:</div>
+          <div style="background: rgba(0,0,0,0.12); padding: 8px 10px; border-radius: 4px; font-size: 11px;">
+            <div style="color: var(--text-muted); margin-bottom: 2px;">Next in priority order:</div>
             <div style="font-weight: 600; display: flex; align-items: center; gap: 6px;">
-              <span>⚡ ${fallbackProvider.name}</span>
-              <span class="priority-tag" style="font-size: 9px; padding: 1px 5px;">Priority #${fallbackProvider.priority}</span>
-              <span style="color: var(--vscode-descriptionForeground); font-size: 10px;">(${fallbackProvider.model})</span>
+              <span>${fallbackProvider.name}</span>
+              <span class="priority-tag">#${fallbackProvider.priority}</span>
+              <span style="color: var(--text-muted); font-weight: 400;">(${fallbackProvider.model})</span>
             </div>
           </div>
-          <div style="display: flex; gap: 8px;">
-            <button class="primary-btn btn-accept-fallback" style="padding: 7px 12px; font-size: 11px; flex: 2; font-weight: 600;">
-              ⚡ Switch to ${fallbackProvider.name} & Retry
+          <div style="display: flex; gap: 6px;">
+            <button class="primary-btn btn-accept-fallback" style="flex: 2;">
+              Switch to ${fallbackProvider.name} & Retry
             </button>
-            <button class="secondary-btn btn-dismiss-fallback" style="padding: 7px 10px; font-size: 11px; flex: 1;">
-              Keep Current
+            <button class="secondary-btn btn-dismiss-fallback" style="flex: 1;">
+              Dismiss
             </button>
           </div>
         `;
@@ -936,7 +1117,7 @@
         const btnDismiss = box.querySelector('.btn-dismiss-fallback');
 
         btnAccept.addEventListener('click', () => {
-          box.innerHTML = `<div style="font-size:11px; padding: 6px; color:var(--vscode-testing-iconPassed, #4ec9b0);">✓ Switching to ${fallbackProvider.name} and retrying request...</div>`;
+          box.innerHTML = `<div style="font-size: 11px; color: var(--text-muted);">Switching to ${fallbackProvider.name} and retrying...</div>`;
           if (vscode) {
             vscode.postMessage({
               command: 'acceptFallback',

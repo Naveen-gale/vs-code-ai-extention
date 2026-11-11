@@ -201,11 +201,11 @@ class ChatController {
       }
     }
 
-    // Determine endpoint for Ollama
+    // Determine endpoint for Ollama or Cloudflare
     let endpoint = this.ollamaEndpoint;
-    if (this.activeProvider === PROVIDERS.OLLAMA && this.providerManager) {
-      const cfg = await this.providerManager.getProviderConfiguration(PROVIDERS.OLLAMA);
-      if (cfg.endpoint) {
+    if (this.providerManager) {
+      const cfg = await this.providerManager.getProviderConfiguration(this.activeProvider);
+      if (cfg && cfg.endpoint) {
         endpoint = cfg.endpoint;
       }
     }
@@ -241,6 +241,12 @@ class ChatController {
         systemPrompt,
         model: this.activeModel
       });
+
+      if (!response || typeof response.text !== 'string' || response.text.trim().length === 0) {
+        throw new Error(
+          `Provider "${this.activeProvider}" returned an empty response for model "${this.activeModel}". Please try another model or switch providers.`
+        );
+      }
 
       // 8. Record Success & mark provider connected
       if (this.usageTracker) {

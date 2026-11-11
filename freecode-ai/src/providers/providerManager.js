@@ -247,7 +247,14 @@ class ProviderManager {
       gemini: 1,
       groq: 2,
       openrouter: 3,
-      ollama: 4
+      ollama: 4,
+      cohere: 5,
+      cloudflare: 6,
+      mistral: 7,
+      nvidia: 8,
+      deepseek: 9,
+      huggingface: 10,
+      openai: 11
     };
     return defaults[providerId] || 99;
   }

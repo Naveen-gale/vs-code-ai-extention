@@ -67,7 +67,14 @@ function activate(context) {
                         "Google Gemini",
                         "Groq",
                         "OpenRouter",
-                        "Ollama (Local)"
+                        "Ollama (Local)",
+                        "Cohere",
+                        "Cloudflare Workers AI",
+                        "Mistral AI",
+                        "NVIDIA NIM",
+                        "DeepSeek",
+                        "Hugging Face",
+                        "OpenAI"
                     ];
 
                     const selected = await vscode.window.showQuickPick(
@@ -80,6 +87,13 @@ function activate(context) {
                         if (selected.includes("Groq")) providerKey = PROVIDERS.GROQ;
                         else if (selected.includes("OpenRouter")) providerKey = PROVIDERS.OPENROUTER;
                         else if (selected.includes("Ollama")) providerKey = PROVIDERS.OLLAMA;
+                        else if (selected.includes("Cohere")) providerKey = PROVIDERS.COHERE;
+                        else if (selected.includes("Cloudflare")) providerKey = PROVIDERS.CLOUDFLARE;
+                        else if (selected.includes("Mistral")) providerKey = PROVIDERS.MISTRAL;
+                        else if (selected.includes("NVIDIA")) providerKey = PROVIDERS.NVIDIA;
+                        else if (selected.includes("DeepSeek")) providerKey = PROVIDERS.DEEPSEEK;
+                        else if (selected.includes("Hugging Face")) providerKey = PROVIDERS.HUGGINGFACE;
+                        else if (selected.includes("OpenAI")) providerKey = PROVIDERS.OPENAI;
 
                         await chatController.setProvider(providerKey);
 
@@ -112,7 +126,14 @@ function activate(context) {
                         const choice = await vscode.window.showQuickPick([
                             { label: "Google Gemini", id: PROVIDERS.GEMINI },
                             { label: "Groq", id: PROVIDERS.GROQ },
-                            { label: "OpenRouter", id: PROVIDERS.OPENROUTER }
+                            { label: "OpenRouter", id: PROVIDERS.OPENROUTER },
+                            { label: "Cohere", id: PROVIDERS.COHERE },
+                            { label: "Cloudflare Workers AI", id: PROVIDERS.CLOUDFLARE },
+                            { label: "Mistral AI", id: PROVIDERS.MISTRAL },
+                            { label: "NVIDIA NIM", id: PROVIDERS.NVIDIA },
+                            { label: "DeepSeek", id: PROVIDERS.DEEPSEEK },
+                            { label: "Hugging Face", id: PROVIDERS.HUGGINGFACE },
+                            { label: "OpenAI", id: PROVIDERS.OPENAI }
                         ], { placeHolder: "Select provider to configure API Key" });
 
                         if (!choice) return;
@@ -128,6 +149,9 @@ function activate(context) {
 
                     if (key) {
                         await secretManager.storeApiKey(providerId, key);
+                        if (usageTracker) {
+                            usageTracker.clearCooldown(providerId);
+                        }
                         vscode.window.showInformationMessage(
                             `API key for ${PROVIDER_METADATA[providerId]?.name || providerId} saved securely in SecretStorage.`
                         );
@@ -228,6 +252,23 @@ function activate(context) {
                                 await sidebarProvider.chatProvider.handleSimulateFailover();
                             }
                         }, 600);
+                    }
+                }
+            )
+        );
+
+        // Command: Reset Rate Limit Cooldowns
+        context.subscriptions.push(
+            vscode.commands.registerCommand(
+                "freecodeAI.resetRateLimits",
+                async () => {
+                    if (usageTracker) {
+                        usageTracker.clearCooldown();
+                    }
+                    vscode.window.showInformationMessage("FreeCode AI: All rate limit cooldowns have been reset.");
+                    if (sidebarProvider && sidebarProvider.chatProvider) {
+                        await sidebarProvider.chatProvider.sendProvidersList();
+                        await sidebarProvider.chatProvider.sendStateUpdate();
                     }
                 }
             )

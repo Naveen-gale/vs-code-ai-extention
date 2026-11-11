@@ -113,45 +113,86 @@ class ChatProvider {
       case 'saveApiKey':
         await this.handleSaveApiKey(message.provider, message.apiKey, {
           activate: message.activate,
-          model: message.model
+          model: message.model,
+          priority: message.priority,
+          endpoint: message.endpoint
         });
         break;
 
       case 'saveEndpoint':
         await this.handleSaveEndpoint(message.endpoint, {
           activate: message.activate,
-          model: message.model
+          model: message.model,
+          priority: message.priority
         });
         break;
 
-      case 'testConnection':
-        await this.handleTestConnection(message.provider, message.endpoint);
-        break;
-
-      case 'saveAndTestConnection':
-        if (message.provider === PROVIDERS.OLLAMA) {
-          if (message.endpoint) {
-            await this.handleSaveEndpoint(message.endpoint, { activate: false });
-          }
-        } else if (message.apiKey) {
-          await this.handleSaveApiKey(message.provider, message.apiKey, { activate: false });
+      case 'testConnection': {
+        let key = message.apiKey;
+        if (!key && this.secretManager) {
+          key = await this.secretManager.getApiKey(message.provider);
         }
-        await this.handleTestConnection(message.provider, message.endpoint);
-        await this.handleFetchModels(message.provider);
+        await this.handleTestConnection(message.provider, message.endpoint, key);
+        await this.handleFetchModels(message.provider, key, message.endpoint);
         break;
+      }
+
+      case 'saveAndTestConnection': {
+        const prov = message.provider;
+        const key = message.apiKey;
+        const endpoint = message.endpoint;
+        const priority = message.priority;
+
+        if (prov === PROVIDERS.OLLAMA) {
+          if (endpoint) {
+            await this.handleSaveEndpoint(endpoint, {
+              activate: false,
+              priority
+            });
+          }
+        } else if (key) {
+          await this.handleSaveApiKey(prov, key, {
+            activate: false,
+            priority,
+            endpoint
+          });
+        } else if (endpoint && (prov === PROVIDERS.CLOUDFLARE || prov === PROVIDERS.NVIDIA)) {
+          if (this.providerManager) {
+            await this.providerManager.setProviderConfiguration(prov, {
+              endpoint,
+              priority: priority !== undefined ? Number(priority) : undefined
+            });
+          }
+        }
+
+        let effectiveKey = key;
+        if (!effectiveKey && this.secretManager) {
+          effectiveKey = await this.secretManager.getApiKey(prov);
+        }
+
+        await this.handleTestConnection(prov, endpoint, effectiveKey);
+        await this.handleFetchModels(prov, effectiveKey, endpoint);
+        break;
+      }
 
       case 'removeProvider':
         await this.handleRemoveProvider(message.provider);
         break;
 
-      case 'fetchModels':
-        await this.handleFetchModels(message.provider);
+      case 'fetchModels': {
+        let key = message.apiKey;
+        if (!key && this.secretManager) {
+          key = await this.secretManager.getApiKey(message.provider);
+        }
+        await this.handleFetchModels(message.provider, key, message.endpoint);
         break;
+      }
 
       case 'selectModel':
         await this.handleSelectModel(message.provider, message.model, {
           activate: message.activate,
-          priority: message.priority
+          priority: message.priority,
+          endpoint: message.endpoint
         });
         break;
 
@@ -180,6 +221,21 @@ class ChatProvider {
         }
         this.sendDashboardData(message.provider);
         vscode.window.showInformationMessage('FreeCode AI: Usage metrics have been reset.');
+        break;
+
+      case 'resetRateLimits':
+        if (this.usageTracker) {
+          await this.usageTracker.clearCooldown(message.provider === 'all' ? null : (message.provider || null));
+        }
+        await this.sendProvidersList();
+        await this.sendStateUpdate();
+        this.sendDashboardData(message.provider || 'current');
+        this.postMessage({
+          type: 'connectionResult',
+          success: true,
+          message: 'Rate limit cooldowns have been reset successfully.'
+        });
+        vscode.window.showInformationMessage('FreeCode AI: Rate limit cooldowns have been reset.');
         break;
 
       // Compatibility with Day 1 legacy triggers
@@ -242,12 +298,15 @@ class ChatProvider {
     });
   }
 
-  async getModelsForProvider(providerId) {
-    const apiKey = this.secretManager ? await this.secretManager.getApiKey(providerId) : null;
-    let endpoint = this.chatController ? this.chatController.ollamaEndpoint : 'http://127.0.0.1:11434';
-    if (providerId === PROVIDERS.OLLAMA && this.providerManager) {
-      const cfg = await this.providerManager.getProviderConfiguration(PROVIDERS.OLLAMA);
+  async getModelsForProvider(providerId, customApiKey = null, customEndpoint = null) {
+    const apiKey = customApiKey || (this.secretManager ? await this.secretManager.getApiKey(providerId) : null);
+    let endpoint = customEndpoint;
+    if (!endpoint && this.providerManager) {
+      const cfg = await this.providerManager.getProviderConfiguration(providerId);
       if (cfg && cfg.endpoint) endpoint = cfg.endpoint;
+    }
+    if (!endpoint && providerId === PROVIDERS.OLLAMA) {
+      endpoint = this.chatController ? this.chatController.ollamaEndpoint : 'http://127.0.0.1:11434';
     }
     return await ModelDiscovery.fetchModels(providerId, {
       apiKey,
@@ -314,6 +373,7 @@ class ChatProvider {
       if (this.providerManager && activeProv && retryDepth < 1) {
         const fallback = await this.providerManager.getNextFallbackProvider(activeProv, this.usageTracker);
         if (fallback) {
+          const isRateLimit = (err?.category === 'RATE_LIMIT') || (err?.message && err.message.toLowerCase().includes('rate limit'));
           // 1. Post interactive fallback suggestion to Webview
           this.postMessage({
             type: 'fallbackSuggestion',
@@ -323,7 +383,8 @@ class ChatProvider {
             },
             reason: err.message,
             fallbackProvider: fallback,
-            pendingPrompt: text
+            pendingPrompt: text,
+            isRateLimit
           });
 
           // 2. Ask user via VS Code notification before switching
@@ -361,8 +422,12 @@ class ChatProvider {
   }
 
   async handleSaveApiKey(providerId, apiKey, options = {}) {
-    if (this.secretManager) {
-      await this.secretManager.storeApiKey(providerId, apiKey);
+    if (typeof apiKey === 'string' && apiKey.trim().length > 0 && this.secretManager) {
+      await this.secretManager.storeApiKey(providerId, apiKey.trim());
+    }
+    // Rate limit cooldown reset when API key is configured or updated
+    if (this.usageTracker) {
+      this.usageTracker.clearCooldown(providerId);
     }
     if (this.providerManager) {
       const updateData = { connectionState: 'configured' };
@@ -371,6 +436,9 @@ class ChatProvider {
       }
       if (options.priority !== undefined) {
         updateData.priority = Number(options.priority);
+      }
+      if (options.endpoint !== undefined) {
+        updateData.endpoint = options.endpoint;
       }
       await this.providerManager.setProviderConfiguration(providerId, updateData);
     }
@@ -409,6 +477,10 @@ class ChatProvider {
   }
 
   async handleSaveEndpoint(endpoint, options = {}) {
+    // Clear cooldown when endpoint is updated
+    if (this.usageTracker) {
+      this.usageTracker.clearCooldown(PROVIDERS.OLLAMA);
+    }
     if (this.providerManager) {
       const updateData = { endpoint, connectionState: 'configured' };
       if (options.model) {
@@ -456,33 +528,37 @@ class ChatProvider {
     await this.sendStateUpdate();
   }
 
-  async handleTestConnection(providerId, customEndpoint) {
+  async handleTestConnection(providerId, customEndpoint = null, customApiKey = null) {
     const meta = PROVIDER_METADATA[providerId] || {};
-    let apiKey = null;
+    let apiKey = customApiKey;
 
-    if (meta.requiresApiKey && this.secretManager) {
+    if (!apiKey && meta.requiresApiKey && this.secretManager) {
       apiKey = await this.secretManager.getApiKey(providerId);
-      if (!apiKey) {
-        this.postMessage({
-          type: 'connectionResult',
-          provider: providerId,
-          success: false,
-          message: `API key not found for ${meta.name}. Please configure your API key first.`
-        });
-        if (this.providerManager) {
-          this.providerManager.setConnectionState(providerId, 'error');
-          await this.sendProvidersList();
-        }
-        return;
+    }
+
+    if (meta.requiresApiKey && !apiKey) {
+      this.postMessage({
+        type: 'connectionResult',
+        provider: providerId,
+        success: false,
+        message: `API key not found for ${meta.name}. Please configure your API key first.`
+      });
+      if (this.providerManager) {
+        this.providerManager.setConnectionState(providerId, 'error');
+        await this.sendProvidersList();
       }
+      return;
     }
 
     try {
       const { ProviderFactory } = require('../providers/providerFactory');
-      let endpoint = customEndpoint || (this.chatController ? this.chatController.ollamaEndpoint : 'http://127.0.0.1:11434');
-      if (providerId === PROVIDERS.OLLAMA && this.providerManager && !customEndpoint) {
-        const cfg = await this.providerManager.getProviderConfiguration(PROVIDERS.OLLAMA);
-        if (cfg.endpoint) endpoint = cfg.endpoint;
+      let endpoint = customEndpoint;
+      if (!endpoint && this.providerManager) {
+        const cfg = await this.providerManager.getProviderConfiguration(providerId);
+        if (cfg && cfg.endpoint) endpoint = cfg.endpoint;
+      }
+      if (!endpoint && providerId === PROVIDERS.OLLAMA) {
+        endpoint = this.chatController ? this.chatController.ollamaEndpoint : 'http://127.0.0.1:11434';
       }
 
       const providerInstance = ProviderFactory.create(providerId, {
@@ -544,22 +620,27 @@ class ChatProvider {
     await this.sendStateUpdate();
   }
 
-  async handleFetchModels(providerId) {
-    const models = await this.getModelsForProvider(providerId);
+  async handleFetchModels(providerId, customApiKey = null, customEndpoint = null) {
+    const models = await this.getModelsForProvider(providerId, customApiKey, customEndpoint);
     let activeModel = null;
     if (this.providerManager) {
       const cfg = await this.providerManager.getProviderConfiguration(providerId);
-      activeModel = cfg.model;
+      activeModel = cfg ? cfg.model : null;
     }
     if (!activeModel && this.chatController && this.chatController.activeProvider === providerId) {
       activeModel = this.chatController.activeModel;
+    }
+    if (!activeModel && models.length > 0) {
+      const def = models.find(m => m.isDefault);
+      activeModel = def ? def.id : models[0].id;
     }
 
     this.postMessage({
       type: 'modelsUpdated',
       provider: providerId,
       models,
-      activeModel
+      activeModel,
+      count: models.length
     });
   }
 
@@ -571,6 +652,9 @@ class ChatProvider {
       const updateData = { model: modelId };
       if (options.priority !== undefined) {
         updateData.priority = Number(options.priority);
+      }
+      if (options.endpoint !== undefined) {
+        updateData.endpoint = options.endpoint;
       }
       await this.providerManager.setProviderConfiguration(targetProvider, updateData);
     }

@@ -9,9 +9,9 @@
 <body>
   <!-- Navigation Tabs -->
   <nav class="tab-bar">
-    <button class="tab-btn active" data-tab="chat">💬 Chat</button>
-    <button class="tab-btn" data-tab="settings">⚙️ Providers</button>
-    <button class="tab-btn" data-tab="dashboard">📊 Usage</button>
+    <button class="tab-btn active" data-tab="chat">Chat</button>
+    <button class="tab-btn" data-tab="settings">Providers</button>
+    <button class="tab-btn" data-tab="dashboard">Usage</button>
   </nav>
 
   <!-- TAB 1: Chat Interface -->
@@ -19,25 +19,26 @@
     <!-- Chat Header -->
     <header class="status-bar-header">
       <div id="active-model-pill" class="model-pill unconfigured" title="No AI provider configured. Click to configure.">
+        <span class="status-dot"></span>
         <span id="pill-provider">No Provider Configured</span>
-        <span id="pill-separator" style="display: none;"> / </span>
+        <span id="pill-separator" style="display: none;">/</span>
         <span id="pill-model" style="display: none;"></span>
       </div>
       <div class="header-actions">
-        <button id="btn-new-chat" class="icon-btn" title="Start a fresh conversation">✨ New</button>
-        <button id="btn-clear-chat" class="icon-btn" title="Clear chat history">🗑️ Clear</button>
+        <button id="btn-new-chat" class="icon-btn" title="Start a fresh conversation">New</button>
+        <button id="btn-clear-chat" class="icon-btn" title="Clear chat history">Clear</button>
       </div>
     </header>
 
     <!-- Message History -->
     <div id="messages-container" class="messages-container">
       <div id="empty-state" class="empty-state">
-        <h3>FreeCode AI Assistant</h3>
-        <p>Your multi-provider, local-first coding companion.<br>Switch between any configured provider in one click.</p>
+        <h3>FreeCode AI</h3>
+        <p>Multi-provider coding assistant. Select a prompt below or type a question to begin.</p>
         <div class="quick-prompts">
-          <button class="quick-prompt-btn" data-prompt="Explain how the selected code works step by step.">💡 Explain selected code</button>
-          <button class="quick-prompt-btn" data-prompt="Refactor this code for readability and edge-case handling.">🛠️ Refactor & improve code</button>
-          <button class="quick-prompt-btn" data-prompt="Write unit tests covering edge cases for this function.">🧪 Write unit tests</button>
+          <button class="quick-prompt-btn" data-prompt="Explain how the selected code works step by step.">Explain selected code</button>
+          <button class="quick-prompt-btn" data-prompt="Refactor this code for readability and edge-case handling.">Refactor and improve code</button>
+          <button class="quick-prompt-btn" data-prompt="Write unit tests covering edge cases for this function.">Write unit tests</button>
         </div>
       </div>
     </div>
@@ -45,13 +46,13 @@
     <!-- Typing Indicator -->
     <div id="typing-indicator" class="typing-indicator">
       <div class="spinner"></div>
-      <span id="typing-text">FreeCode AI is thinking...</span>
+      <span id="typing-text">Thinking...</span>
     </div>
 
     <!-- Input Area -->
     <footer class="input-area">
       <div class="input-row">
-        <textarea id="prompt-input" rows="1" placeholder="Ask FreeCode AI (Shift+Enter for newline)..."></textarea>
+        <textarea id="prompt-input" rows="1" placeholder="Ask a question... (Shift+Enter for new line)"></textarea>
         <button id="btn-send" class="send-btn">Send</button>
       </div>
     </footer>
@@ -62,24 +63,21 @@
     <div class="settings-container">
       <div class="providers-header-row">
         <div>
-          <h3>AI Providers</h3>
-          <p class="section-desc">Manage credentials and switch active models independently.</p>
+          <h3>Providers</h3>
+          <p class="section-desc">Manage API keys and active models.</p>
         </div>
-        <div style="display: flex; gap: 6px;">
-          <button id="btn-test-failover" class="secondary-btn" style="width: auto; padding: 4px 10px; font-size: 11px; display: inline-flex; align-items: center; gap: 4px;" title="Test model failover and rate limit switching without real quota exhaustion">🧪 Test Failover</button>
-          <button id="btn-add-provider" class="secondary-btn" style="width: auto; padding: 4px 10px; font-size: 11px;">+ Add / Setup</button>
+        <div class="header-btn-group">
+          <button id="btn-add-provider" class="secondary-btn btn-sm">+ Add Provider</button>
         </div>
       </div>
 
       <!-- Live Notification Banner -->
       <div id="global-provider-alert" class="status-alert" style="display: none;"></div>
 
-      <!-- Persistent Cards Grid: Shows ALL providers simultaneously -->
-      <div id="providers-cards-list" class="providers-cards-list">
-        <!-- Rendered dynamically via app.js -->
-      </div>
+      <!-- Persistent Cards Grid -->
+      <div id="providers-cards-list" class="providers-cards-list"></div>
 
-      <!-- Provider Manage Modal / Slide-out Panel -->
+      <!-- Provider Manage Modal -->
       <div id="manage-modal" class="manage-modal" style="display: none;">
         <div class="manage-modal-content">
           <div class="manage-modal-header">
@@ -87,69 +85,83 @@
             <button id="btn-close-modal" class="icon-btn" title="Close">✕</button>
           </div>
 
-          <div id="modal-status-alert" class="status-alert" style="display: none; margin-bottom: 10px;"></div>
+          <div id="modal-status-alert" class="status-alert" style="display: none;"></div>
 
           <!-- Provider Selector in Modal -->
-          <div id="modal-group-provider-select" class="form-group" style="margin-bottom: 10px;">
-            <label for="modal-provider-dropdown">AI Provider</label>
+          <div id="modal-group-provider-select" class="form-group">
+            <label for="modal-provider-dropdown">Provider</label>
             <select id="modal-provider-dropdown">
-              <option value="gemini">Google Gemini (Recommended - Free Tier)</option>
-              <option value="groq">Groq (Ultra-Fast LPUs)</option>
-              <option value="openrouter">OpenRouter (Multi-model & Free tiers)</option>
-              <option value="ollama">Ollama (100% Local - No API Key)</option>
+              <option value="gemini">Google Gemini (Free Tier)</option>
+              <option value="groq">Groq (LPU Inference)</option>
+              <option value="openrouter">OpenRouter (Multi-Model)</option>
+              <option value="ollama">Ollama (Local - No API Key)</option>
+              <option value="cohere">Cohere (Trial Key)</option>
+              <option value="cloudflare">Cloudflare Workers AI</option>
+              <option value="mistral">Mistral AI</option>
+              <option value="nvidia">NVIDIA NIM</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="huggingface">Hugging Face</option>
+              <option value="openai">OpenAI</option>
             </select>
           </div>
 
-          <!-- API Key Section (hidden for Ollama) -->
+          <!-- API Key Section -->
           <div id="modal-group-key" class="form-group">
             <label for="modal-api-key-input">API Key</label>
-            <input type="password" id="modal-api-key-input" placeholder="Enter new or updated API key..." />
+            <input type="password" id="modal-api-key-input" placeholder="Enter API key..." />
             <div class="form-hint">
-              Current Key: <strong id="modal-masked-key">••••••••</strong><br>
-              Stored securely in VS Code SecretStorage.
-              <a id="modal-api-key-link" href="#" target="_blank">Get API Key &rarr;</a>
+              Saved Key: <strong id="modal-masked-key">Not configured</strong> · 
+              <a id="modal-api-key-link" href="#" target="_blank">Get API Key</a>
             </div>
           </div>
 
-          <!-- Ollama Endpoint Section (visible for Ollama) -->
+          <!-- Ollama / Cloudflare Endpoint Section -->
           <div id="modal-group-endpoint" class="form-group" style="display: none;">
-            <label for="modal-endpoint-input">Ollama Local Server Endpoint</label>
+            <label id="modal-endpoint-label" for="modal-endpoint-input">Endpoint / Account ID</label>
             <input type="text" id="modal-endpoint-input" value="http://127.0.0.1:11434" />
-            <div class="form-hint">Default local server endpoint. Make sure 'ollama serve' is running.</div>
+            <div id="modal-endpoint-hint" class="form-hint">Default local server endpoint.</div>
           </div>
 
-          <div class="action-row" style="margin-top: 8px;">
-            <button id="modal-btn-save-test-conn" class="secondary-btn" style="width: 100%; font-weight: 600; padding: 9px;" title="Save credentials and verify connection with provider API">
-              💾⚡ Save and Test Connection
+          <div class="action-row">
+            <button id="modal-btn-save-test-conn" class="secondary-btn" title="Save credentials and verify connection">
+              Save and Test Connection
             </button>
           </div>
 
+          <div class="modal-divider"></div>
+
           <!-- Model Selection Section -->
-          <div class="form-group" style="margin-top: 14px; border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2)); padding-top: 12px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-              <label for="modal-model-select">Selected Model for this Provider</label>
-              <button id="modal-btn-refresh-models" class="icon-btn" style="font-size: 11px;">🔄 Refresh from API</button>
+          <div class="form-group">
+            <div class="label-row">
+              <label for="modal-model-select">Model</label>
+              <button id="modal-btn-refresh-models" class="icon-btn">Refresh List</button>
             </div>
             <select id="modal-model-select"></select>
-            <div id="modal-model-desc" class="form-hint" style="margin-top: 5px;"></div>
+            <div id="modal-model-desc" class="form-hint"></div>
           </div>
 
           <!-- Failover Priority Order -->
-          <div class="form-group" style="margin-top: 12px; border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2)); padding-top: 10px;">
-            <label for="modal-priority-select">Failover / Rate Limit Priority</label>
+          <div class="form-group">
+            <label for="modal-priority-select">Failover Priority</label>
             <select id="modal-priority-select">
-              <option value="1">Priority 1 (Primary / Highest)</option>
+              <option value="1">Priority 1 (Primary)</option>
               <option value="2">Priority 2 (1st Fallback)</option>
               <option value="3">Priority 3 (2nd Fallback)</option>
               <option value="4">Priority 4 (3rd Fallback)</option>
+              <option value="5">Priority 5 (4th Fallback)</option>
+              <option value="6">Priority 6 (5th Fallback)</option>
+              <option value="7">Priority 7 (6th Fallback)</option>
+              <option value="8">Priority 8 (7th Fallback)</option>
+              <option value="9">Priority 9 (8th Fallback)</option>
+              <option value="10">Priority 10 (9th Fallback)</option>
+              <option value="11">Priority 11 (Lowest)</option>
             </select>
-            <div class="form-hint">When this model hits rate limits or fails, FreeCode AI will ask before switching to the next priority provider.</div>
+            <div class="form-hint">Used when the active provider hits a rate limit or fails.</div>
           </div>
 
-          <!-- Below: ONLY ONE BUTTON: Select this Model -->
-          <div class="modal-save-actions" style="margin-top: 14px;">
-            <button id="modal-btn-select-model" class="primary-btn" style="width: 100%; font-weight: 700; padding: 10px; font-size: 12px;" title="Select and activate this model for chat">
-              ✓ Select this Model
+          <div class="modal-save-actions">
+            <button id="modal-btn-select-model" class="primary-btn" title="Select and activate this model for chat">
+              Select this Model
             </button>
           </div>
 
@@ -163,23 +175,22 @@
             <button id="modal-btn-use-now"></button>
           </div>
 
-          <div style="margin-top: 16px; border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2)); padding-top: 10px; display: flex; justify-content: space-between; align-items: center;">
-            <button id="modal-btn-remove" class="card-btn remove-icon-btn" style="color: var(--vscode-errorForeground); font-size: 11px;">🗑️ Delete Configuration</button>
+          <div class="modal-footer-danger">
+            <button id="modal-btn-remove" class="card-btn remove-icon-btn">Delete Configuration</button>
           </div>
         </div>
       </div>
 
-      <!-- Delete Confirmation Modal (In-Webview: never blocked by iframe sandbox) -->
+      <!-- Delete Confirmation Modal -->
       <div id="confirm-modal" class="confirm-modal-overlay" style="display: none;">
         <div class="confirm-modal-box">
-          <div style="font-size: 26px; margin-bottom: 8px;">⚠️</div>
           <h4 id="confirm-modal-title">Delete Provider Configuration?</h4>
-          <p id="confirm-modal-msg" style="font-size: 11px; margin: 8px 0 16px 0; color: var(--vscode-descriptionForeground); line-height: 1.4;">
+          <p id="confirm-modal-msg">
             Are you sure you want to remove the credentials for this provider? Other saved providers will remain untouched.
           </p>
-          <div style="display: flex; gap: 8px; justify-content: center;">
-            <button id="btn-cancel-delete" class="secondary-btn" style="width: auto; padding: 6px 14px;">Cancel</button>
-            <button id="btn-execute-delete" class="primary-btn" style="background: var(--vscode-errorForeground, #f48771); color: #ffffff; width: auto; padding: 6px 14px;">Yes, Delete</button>
+          <div class="confirm-actions">
+            <button id="btn-cancel-delete" class="secondary-btn">Cancel</button>
+            <button id="btn-execute-delete" class="danger-btn">Delete</button>
           </div>
         </div>
       </div>
@@ -191,6 +202,13 @@
           <option value="groq">Groq</option>
           <option value="openrouter">OpenRouter</option>
           <option value="ollama">Ollama</option>
+          <option value="cohere">Cohere</option>
+          <option value="cloudflare">Cloudflare Workers AI</option>
+          <option value="mistral">Mistral AI</option>
+          <option value="nvidia">NVIDIA NIM</option>
+          <option value="deepseek">DeepSeek</option>
+          <option value="huggingface">Hugging Face</option>
+          <option value="openai">OpenAI</option>
         </select>
         <input type="password" id="api-key-input" />
         <input type="text" id="endpoint-input" value="http://127.0.0.1:11434" />
@@ -210,7 +228,7 @@
   <section id="view-dashboard" class="tab-content">
     <div class="dashboard-container">
       <div class="dashboard-header-block">
-        <h3 class="dashboard-main-title">📊 Usage & Performance</h3>
+        <h3 class="dashboard-main-title">Usage & Performance</h3>
         <p class="section-desc">Real-time telemetry, token consumption, and rate limits.</p>
       </div>
 
@@ -222,12 +240,19 @@
           <option value="groq">Groq</option>
           <option value="openrouter">OpenRouter</option>
           <option value="ollama">Ollama</option>
+          <option value="cohere">Cohere</option>
+          <option value="cloudflare">Cloudflare Workers AI</option>
+          <option value="mistral">Mistral AI</option>
+          <option value="nvidia">NVIDIA NIM</option>
+          <option value="deepseek">DeepSeek</option>
+          <option value="huggingface">Hugging Face</option>
+          <option value="openai">OpenAI</option>
         </select>
       </div>
 
       <div class="stats-grid">
         <div class="stat-card full-width health-card">
-          <div class="stat-title">🛡️ Health & Cooldown Status</div>
+          <div class="stat-title">Health & Cooldown Status</div>
           <div class="health-row">
             <div id="dash-cooldown" class="cooldown-badge normal">● Ready / Normal</div>
             <div id="dash-last-req" class="stat-sub">Last request: Never</div>
@@ -235,19 +260,19 @@
         </div>
 
         <div class="stat-card">
-          <div class="stat-title">📈 Total Requests</div>
+          <div class="stat-title">Total Requests</div>
           <div id="dash-total-reqs" class="stat-value">0</div>
           <div id="dash-success-rate" class="stat-sub">100% success</div>
         </div>
 
         <div class="stat-card">
-          <div class="stat-title">⏱️ Rate Limits</div>
+          <div class="stat-title">Rate Limits</div>
           <div id="dash-rate-limits" class="stat-value">0</div>
           <div id="dash-failed-reqs" class="stat-sub">0 failed requests</div>
         </div>
 
         <div class="stat-card full-width tokens-card">
-          <div class="stat-title">⚡ Token Consumption</div>
+          <div class="stat-title">Token Consumption</div>
           <div id="dash-total-tokens" class="stat-value tokens-value">0</div>
           <div class="tokens-split-row">
             <span class="token-chip prompt">Prompt: <strong id="dash-prompt-tokens">0</strong></span>
@@ -260,8 +285,9 @@
       </div>
 
       <div class="action-row" style="margin-top: 14px;">
-        <button id="btn-refresh-dashboard" class="secondary-btn">🔄 Refresh Stats</button>
-        <button id="btn-reset-usage" class="secondary-btn reset-btn" style="color: var(--vscode-errorForeground);">🗑️ Reset Stats</button>
+        <button id="btn-refresh-dashboard" class="secondary-btn">Refresh Stats</button>
+        <button id="btn-reset-rate-limits" class="secondary-btn" style="color: var(--vscode-charts-orange, #e5a50a);" title="Clear rate limit cooldown timers">Reset Rate Limits</button>
+        <button id="btn-reset-usage" class="secondary-btn reset-btn" style="color: var(--vscode-errorForeground);">Reset Stats</button>
       </div>
     </div>
   </section>
