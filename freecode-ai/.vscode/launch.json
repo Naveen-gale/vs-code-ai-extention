@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run FreeCode AI",
+      "name": "Run Laven Extension",
       "type": "extensionHost",
       "request": "launch",
       "args": [
