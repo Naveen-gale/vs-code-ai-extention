@@ -116,7 +116,7 @@ class UsageDisplay {
     }
 
     return [
-      `### FreeCode AI`,
+      `### Laven`,
       `**Active Provider:** ${providerName}`,
       `**Active Model:** \`${modelName}\``,
       `**Inline Suggestions:** ${inlineStatus}`,

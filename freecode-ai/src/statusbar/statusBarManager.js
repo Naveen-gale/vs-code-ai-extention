@@ -50,8 +50,8 @@ class StatusBarManager {
     const inlineEnabled = this.agentManager ? this.agentManager.isEnabled() : true;
 
     if (!activeProvider) {
-      this.statusBarItem.text = '$(freecode-logo) FreeCode AI: Configure';
-      this.statusBarItem.tooltip = 'FreeCode AI: Click to configure an AI provider';
+      this.statusBarItem.text = '$(freecode-logo) Laven: Configure';
+      this.statusBarItem.tooltip = 'Laven: Click to configure an AI provider';
       return;
     }
 
@@ -69,7 +69,7 @@ class StatusBarManager {
     const shortModel = model ? (model.length > 18 ? model.slice(0, 16) + '…' : model) : '';
     const modelTag = shortModel ? ` (${shortModel})` : '';
 
-    this.statusBarItem.text = `$(freecode-logo) FreeCode AI: ${shortName}${modelTag}`;
+    this.statusBarItem.text = `$(freecode-logo) Laven: ${shortName}${modelTag}`;
 
     // Format rich Markdown tooltip
     const tooltipText = UsageDisplay.formatTooltip(activeProvider, model, this.usageTracker, inlineEnabled);

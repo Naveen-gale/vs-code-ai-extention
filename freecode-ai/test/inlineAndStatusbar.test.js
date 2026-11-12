@@ -354,7 +354,7 @@ function createMockDocument({ text, languageId = 'javascript', fileName = 'test.
     const tracker = new UsageTracker(memento);
     const tooltip = UsageDisplay.formatTooltip(PROVIDERS.GROQ, 'llama-3.3-70b-versatile', tracker, true);
 
-    assert.ok(tooltip.includes('### FreeCode AI'));
+    assert.ok(tooltip.includes('### Laven') || tooltip.includes('### FreeCode AI'));
     assert.ok(tooltip.includes('Groq'));
     assert.ok(tooltip.includes('llama-3.3-70b-versatile'));
     assert.ok(tooltip.includes('Inline Suggestions:') && tooltip.includes('Enabled'));

@@ -1,16 +1,11 @@
 /**
- * Prompt Builder for FreeCode AI.
- * Formats system instructions, conversation context, and message history.
- */
-
-/**
- * Prompt Builder & Token Optimization Engine for FreeCode AI.
+ * Prompt Builder & Token Optimization Engine for Laven.
  * Formats system instructions, conversation context, and applies intelligent
  * prompt compaction to conserve tokens and prevent API rate-limit exhaustion
  * while ensuring high-accuracy results.
  */
 
-const DEFAULT_SYSTEM_PROMPT = `You are FreeCode AI, an expert, concise, and helpful AI coding assistant in Visual Studio Code.
+const DEFAULT_SYSTEM_PROMPT = `You are Laven, an expert, concise, and helpful AI coding assistant in Visual Studio Code.
 Guidelines:
 - Provide direct, production-quality code and clear explanations.
 - When generating code, always use fenced code blocks with language identifiers.

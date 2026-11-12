@@ -166,7 +166,7 @@
 
     const sender = document.createElement('div');
     sender.className = 'message-sender';
-    sender.textContent = msg.role === 'user' ? 'You' : (msg.role === 'assistant' ? 'FreeCode AI' : 'System');
+    sender.textContent = msg.role === 'user' ? 'You' : (msg.role === 'assistant' ? 'Laven' : 'System');
 
     const body = document.createElement('div');
     body.className = 'message-text';
@@ -274,7 +274,7 @@
       providersCardsList.innerHTML = `
         <div class="empty-providers-box">
           <h4>No Providers Configured</h4>
-          <p>Add an AI provider to start using FreeCode AI.</p>
+          <p>Add an AI provider to start using Laven.</p>
           <button id="btn-empty-add-provider" class="primary-btn btn-sm">
             + Add Provider
           </button>

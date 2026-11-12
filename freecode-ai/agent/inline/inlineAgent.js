@@ -1,5 +1,5 @@
 /**
- * High-Performance, Rate-Limit-Aware Inline Completion Agent for FreeCode AI.
+ * High-Performance, Rate-Limit-Aware Inline Completion Agent for Laven.
  * Implements vscode.InlineCompletionItemProvider with:
  * - 0ms predictive typing cache
  * - Immediate response on manual shortcut triggers (0ms debounce on Alt+/, Alt+\)
@@ -52,7 +52,7 @@ class InlineAgent {
   _log(message) {
     try {
       if (!this._outputChannel && vscode.window && typeof vscode.window.createOutputChannel === 'function') {
-        this._outputChannel = vscode.window.createOutputChannel('FreeCode AI');
+        this._outputChannel = vscode.window.createOutputChannel('Laven');
       }
       if (this._outputChannel) {
         const time = new Date().toLocaleTimeString();
@@ -371,9 +371,9 @@ class InlineAgent {
 
     let message;
     if (options.isNearingLimit) {
-      message = `FreeCode AI: ${currentMeta.name} is approaching its request rate limit. Switch to another LLM to avoid interruptions?`;
+      message = `Laven: ${currentMeta.name} is approaching its request rate limit. Switch to another LLM to avoid interruptions?`;
     } else {
-      message = `FreeCode AI: ${currentMeta.name} inline suggestion limit reached${remainingSec}. Switch to another LLM?`;
+      message = `Laven: ${currentMeta.name} inline suggestion limit reached${remainingSec}. Switch to another LLM?`;
     }
 
     this._log(`[Inline] Limit warning: ${message}`);
@@ -401,7 +401,7 @@ class InlineAgent {
                 await vscode.commands.executeCommand('freecodeAI.showStatus');
               } catch (e) {}
               if (vscode.window && typeof vscode.window.showInformationMessage === 'function') {
-                vscode.window.showInformationMessage(`FreeCode AI: Switched to ${altMeta.name} for inline suggestions.`);
+                vscode.window.showInformationMessage(`Laven: Switched to ${altMeta.name} for inline suggestions.`);
               }
             } else if (selection === 'Switch Provider') {
               try {

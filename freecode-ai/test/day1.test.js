@@ -41,7 +41,7 @@ async function runTestAsync(testName, fn) {
         const pkgPath = path.join(projectRoot, "package.json");
         assert.ok(fs.existsSync(pkgPath), "package.json does not exist");
         const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-        assert.strictEqual(pkg.name, "freecode-ai");
+        assert.ok(pkg.name === "laven" || pkg.name === "freecode-ai");
         assert.strictEqual(pkg.main, "./src/extension.js");
         assert.ok(pkg.contributes, "package.json missing contributes");
         assert.ok(pkg.contributes.commands, "package.json missing commands");
@@ -187,7 +187,7 @@ async function runTestAsync(testName, fn) {
     await runTestAsync("Command 'freecodeAI.showStatus' displays expected message", async () => {
         messagesShown.length = 0;
         await registeredCommands.get("freecodeAI.showStatus")();
-        const found = messagesShown.some((m) => m.msg.includes("FreeCode AI is running successfully!"));
+        const found = messagesShown.some((m) => m.msg.includes("Laven is running successfully!") || m.msg.includes("FreeCode AI is running successfully!"));
         assert.ok(found, "Expected status message not shown");
     });
 

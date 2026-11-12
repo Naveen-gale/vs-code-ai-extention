@@ -154,7 +154,7 @@ class ProviderQuickPick {
         }
 
         vscode.window.showInformationMessage(
-          `FreeCode AI: Switched to ${meta.name} (${selected.model || 'Default'})`
+          `Laven: Switched to ${meta.name} (${selected.model || 'Default'})`
         );
         break;
       }
@@ -166,7 +166,7 @@ class ProviderQuickPick {
             await this.statusBarManager.update();
           }
           vscode.window.showInformationMessage(
-            `FreeCode AI: Inline code suggestions ${newState ? 'enabled' : 'disabled'}.`
+            `Laven: Inline code suggestions ${newState ? 'enabled' : 'disabled'}.`
           );
         }
         break;

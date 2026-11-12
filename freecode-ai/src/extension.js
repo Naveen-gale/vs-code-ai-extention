@@ -14,7 +14,7 @@ const { ProviderQuickPick } = require("./statusbar/providerQuickPick");
  * @param {vscode.ExtensionContext} context
  */
 function activate(context) {
-    console.log("FreeCode AI: Activation starting...");
+    console.log("Laven: Activation starting...");
 
     try {
         // Initialize core services
@@ -44,7 +44,7 @@ function activate(context) {
                 sidebarProvider
             )
         );
-        console.log("FreeCode AI: Sidebar view provider registered (freecodeAI.sidebar).");
+        console.log("Laven: Sidebar view provider registered (freecodeAI.sidebar).");
 
         // Initialize Inline Completion Agent Manager
         let agentManager = null;
@@ -57,7 +57,7 @@ function activate(context) {
             agentManager.register(context);
             context.subscriptions.push(agentManager);
         } catch (err) {
-            console.warn("FreeCode AI: AgentManager initialization notice:", err);
+            console.warn("Laven: AgentManager initialization notice:", err);
         }
 
         // Initialize Native Status Bar Manager
@@ -70,7 +70,7 @@ function activate(context) {
             });
             context.subscriptions.push(statusBarManager);
         } catch (err) {
-            console.warn("FreeCode AI: StatusBarManager initialization notice:", err);
+            console.warn("Laven: StatusBarManager initialization notice:", err);
         }
 
         // Provider QuickPick helper
@@ -92,7 +92,7 @@ function activate(context) {
                     try {
                         await vscode.commands.executeCommand("workbench.view.extension.freecodeAI");
                     } catch (err) {
-                        console.warn("FreeCode AI: Focusing view directly:", err);
+                        console.warn("Laven: Focusing view directly:", err);
                         await vscode.commands.executeCommand("freecodeAI.sidebar.focus");
                     }
                 }
@@ -145,7 +145,7 @@ function activate(context) {
                         vscode.window.showInformationMessage(
                             `Selected provider: ${selected}`
                         );
-                        console.log(`FreeCode AI: Selected provider -> ${selected} (${providerKey})`);
+                        console.log(`Laven: Selected provider -> ${selected} (${providerKey})`);
 
                         if (statusBarManager) {
                             await statusBarManager.update();
@@ -293,7 +293,7 @@ function activate(context) {
                 () => {
                     chatController.newChat();
                     sidebarProvider.postMessage({ type: 'chatCleared' });
-                    vscode.window.showInformationMessage("FreeCode AI: Started a new conversation.");
+                    vscode.window.showInformationMessage("Laven: Started a new conversation.");
                 }
             )
         );
@@ -335,7 +335,7 @@ function activate(context) {
                     if (usageTracker) {
                         usageTracker.clearCooldown();
                     }
-                    vscode.window.showInformationMessage("FreeCode AI: All rate limit cooldowns have been reset.");
+                    vscode.window.showInformationMessage("Laven: All rate limit cooldowns have been reset.");
 
                     if (statusBarManager) {
                         await statusBarManager.update();
@@ -374,7 +374,7 @@ function activate(context) {
                             agentManager.invalidateDirectConnection();
                         }
                         vscode.window.showInformationMessage(
-                            `FreeCode AI: Inline suggestions ${nextState ? 'enabled' : 'disabled'}.`
+                            `Laven: Inline suggestions ${nextState ? 'enabled' : 'disabled'}.`
                         );
                     }
                 }
@@ -389,7 +389,7 @@ function activate(context) {
                     try {
                         await vscode.commands.executeCommand("editor.action.inlineSuggest.trigger");
                     } catch (e) {
-                        console.warn("FreeCode AI: trigger inline command notice:", e);
+                        console.warn("Laven: trigger inline command notice:", e);
                     }
                 }
             )
@@ -401,27 +401,27 @@ function activate(context) {
                 "freecodeAI.showStatus",
                 () => {
                     vscode.window.showInformationMessage(
-                        "FreeCode AI is running successfully!"
+                        "Laven is running successfully!"
                     );
-                    console.log("FreeCode AI: Status reported - running successfully.");
+                    console.log("Laven: Status reported - running successfully.");
                 }
             )
         );
 
         vscode.window.showInformationMessage(
-            "FreeCode AI activated successfully!"
+            "Laven activated successfully!"
         );
-        console.log("FreeCode AI: Activation completed successfully.");
+        console.log("Laven: Activation completed successfully.");
     } catch (error) {
-        console.error("FreeCode AI: Error during activation:", error);
+        console.error("Laven: Error during activation:", error);
         vscode.window.showErrorMessage(
-            `FreeCode AI activation failed: ${error.message}`
+            `Laven activation failed: ${error.message}`
         );
     }
 }
 
 function deactivate() {
-    console.log("FreeCode AI: Extension deactivated.");
+    console.log("Laven: Extension deactivated.");
 }
 
 module.exports = {

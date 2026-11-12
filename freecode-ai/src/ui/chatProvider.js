@@ -220,7 +220,7 @@ class ChatProvider {
           await this.usageTracker.reset(message.provider === 'current' ? null : message.provider);
         }
         this.sendDashboardData(message.provider);
-        vscode.window.showInformationMessage('FreeCode AI: Usage metrics have been reset.');
+        vscode.window.showInformationMessage('Laven: Usage metrics have been reset.');
         break;
 
       case 'resetRateLimits':
@@ -235,7 +235,7 @@ class ChatProvider {
           success: true,
           message: 'Rate limit cooldowns have been reset successfully.'
         });
-        vscode.window.showInformationMessage('FreeCode AI: Rate limit cooldowns have been reset.');
+        vscode.window.showInformationMessage('Laven: Rate limit cooldowns have been reset.');
         break;
 
       // Compatibility with Day 1 legacy triggers
@@ -248,7 +248,7 @@ class ChatProvider {
         break;
 
       default:
-        console.warn(`FreeCode AI: Unknown webview command: ${message.command}`);
+        console.warn(`Laven: Unknown webview command: ${message.command}`);
     }
   }
 
@@ -337,7 +337,7 @@ class ChatProvider {
     this.postMessage({
       type: 'status',
       status: 'thinking',
-      message: 'FreeCode AI is analyzing & generating...'
+      message: 'Laven is analyzing & generating...'
     });
 
     try {
@@ -390,7 +390,7 @@ class ChatProvider {
           // 2. Ask user via VS Code notification before switching
           const switchButton = `Switch to ${fallback.name}`;
           vscode.window.showWarningMessage(
-            `FreeCode AI: ${failedMeta.name} failed (${err.message.slice(0, 90)}...). Would you like to switch to priority ${fallback.priority} provider ${fallback.name}?`,
+            `Laven: ${failedMeta.name} failed (${err.message.slice(0, 90)}...). Would you like to switch to priority ${fallback.priority} provider ${fallback.name}?`,
             switchButton,
             'Keep Current'
           ).then(async (selection) => {
@@ -695,7 +695,7 @@ class ChatProvider {
     await this.handleSwitchProvider(targetProviderId);
 
     vscode.window.showInformationMessage(
-      `FreeCode AI: Switched active provider to ${targetMeta.name}.`
+      `Laven: Switched active provider to ${targetMeta.name}.`
     );
 
     const depth = options.retryDepth || 0;
@@ -713,7 +713,7 @@ class ChatProvider {
   async handleSimulateFailover(reason = 'Simulated HTTP 429: Rate limit reached (Too Many Requests)', retryPrompt = 'Hello from failover test!') {
     const activeProv = this.chatController ? this.chatController.activeProvider : null;
     if (!activeProv) {
-      vscode.window.showInformationMessage('FreeCode AI: No active provider configured to test failover.');
+      vscode.window.showInformationMessage('Laven: No active provider configured to test failover.');
       return;
     }
     const failedMeta = PROVIDER_METADATA[activeProv] || { name: activeProv };
@@ -732,7 +732,7 @@ class ChatProvider {
 
     if (!fallback) {
       vscode.window.showWarningMessage(
-        `FreeCode AI Test: ${failedMeta.name} simulated rate limit, but no other configured fallback provider was found. Please configure a secondary provider in the Providers tab to test switching.`
+        `Laven Test: ${failedMeta.name} simulated rate limit, but no other configured fallback provider was found. Please configure a secondary provider in the Providers tab to test switching.`
       );
       return;
     }
@@ -752,7 +752,7 @@ class ChatProvider {
     // 2. Ask user via VS Code notification before switching
     const switchButton = `Switch to ${fallback.name}`;
     vscode.window.showWarningMessage(
-      `FreeCode AI [TEST]: ${failedMeta.name} reached rate limit. Switch to next priority provider ${fallback.name} (Priority #${fallback.priority})?`,
+      `Laven [TEST]: ${failedMeta.name} reached rate limit. Switch to next priority provider ${fallback.name} (Priority #${fallback.priority})?`,
       switchButton,
       'Keep Current'
     ).then(async (selection) => {

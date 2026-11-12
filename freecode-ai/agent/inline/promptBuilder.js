@@ -1,9 +1,9 @@
 /**
- * Prompt Builder for FreeCode AI Inline Completion Agent.
+ * Prompt Builder for Laven Inline Completion Agent.
  * Generates compact, context-aware prompts for high-accuracy inline code completions.
  */
 
-const INLINE_SYSTEM_PROMPT = `You are FreeCode AI, an intelligent inline code completion engine.
+const INLINE_SYSTEM_PROMPT = `You are Laven, an intelligent inline code completion engine.
 
 Your task is to continue the user's code at the cursor position.
 

@@ -1,7 +1,7 @@
 {
-  "name": "freecode-ai",
-  "displayName": "FreeCode AI",
-  "description": "A free-first AI coding assistant for Visual Studio Code.",
+  "name": "laven",
+  "displayName": "Laven",
+  "description": "An open, multi-provider AI coding assistant for Visual Studio Code.",
   "version": "0.1.0",
   "publisher": "naveen",
   "engines": {
@@ -30,8 +30,12 @@
   ],
   "contributes": {
     "icons": {
+      "laven-logo": {
+        "description": "Laven Logo",
+        "default": "./media/icon.svg"
+      },
       "freecode-logo": {
-        "description": "FreeCode AI Logo",
+        "description": "Laven Logo",
         "default": "./media/icon.svg"
       }
     },
@@ -39,7 +43,7 @@
       "activitybar": [
         {
           "id": "freecodeAI",
-          "title": "FreeCode AI",
+          "title": "Laven",
           "icon": "media/icon.svg"
         }
       ]
@@ -49,58 +53,58 @@
         {
           "type": "webview",
           "id": "freecodeAI.sidebar",
-          "name": "FreeCode AI Assistant"
+          "name": "Laven Assistant"
         }
       ]
     },
     "commands": [
       {
         "command": "freecodeAI.openSidebar",
-        "title": "FreeCode AI: Open Sidebar"
+        "title": "Laven: Open Sidebar"
       },
       {
         "command": "freecodeAI.selectProvider",
-        "title": "FreeCode AI: Select AI Provider"
+        "title": "Laven: Select AI Provider"
       },
       {
         "command": "freecodeAI.showStatus",
-        "title": "FreeCode AI: Show Extension Status"
+        "title": "Laven: Show Extension Status"
       },
       {
         "command": "freecodeAI.setApiKey",
-        "title": "FreeCode AI: Set Provider API Key"
+        "title": "Laven: Set Provider API Key"
       },
       {
         "command": "freecodeAI.deleteProvider",
-        "title": "FreeCode AI: Delete Provider Configuration"
+        "title": "Laven: Delete Provider Configuration"
       },
       {
         "command": "freecodeAI.newChat",
-        "title": "FreeCode AI: Start New Chat"
+        "title": "Laven: Start New Chat"
       },
       {
         "command": "freecodeAI.openDashboard",
-        "title": "FreeCode AI: Open Usage Dashboard"
+        "title": "Laven: Open Usage Dashboard"
       },
       {
         "command": "freecodeAI.simulateFailover",
-        "title": "FreeCode AI: Test Rate Limit / Failover Switch"
+        "title": "Laven: Test Rate Limit / Failover Switch"
       },
       {
         "command": "freecodeAI.resetRateLimits",
-        "title": "FreeCode AI: Reset Rate Limit Cooldowns"
+        "title": "Laven: Reset Rate Limit Cooldowns"
       },
       {
         "command": "freecodeAI.openProviderPopup",
-        "title": "FreeCode AI: Switch Provider / Manage Status"
+        "title": "Laven: Switch Provider / Manage Status"
       },
       {
         "command": "freecodeAI.toggleInline",
-        "title": "FreeCode AI: Toggle Inline Code Suggestions"
+        "title": "Laven: Toggle Inline Code Suggestions"
       },
       {
         "command": "freecodeAI.triggerInline",
-        "title": "FreeCode AI: Trigger Inline Code Suggestion"
+        "title": "Laven: Trigger Inline Code Suggestion"
       }
     ],
     "keybindings": [
@@ -124,12 +128,12 @@
       }
     ],
     "configuration": {
-      "title": "FreeCode AI",
+      "title": "Laven",
       "properties": {
         "freecodeAI.inline.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable or disable FreeCode AI inline code suggestions."
+          "description": "Enable or disable Laven inline code suggestions."
         },
         "freecodeAI.inline.debounceDelay": {
           "type": "number",

@@ -4,7 +4,7 @@ class DashboardProvider {
   static createOrShow(extensionUri) {
     const panel = vscode.window.createWebviewPanel(
       'freecodeAiDashboard',
-      'FreeCode AI Dashboard',
+      'Laven Dashboard',
       vscode.ViewColumn.One,
       { enableScripts: true }
     );
