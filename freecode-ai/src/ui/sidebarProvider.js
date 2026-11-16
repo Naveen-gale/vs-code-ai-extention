@@ -21,6 +21,7 @@ class FreeCodeSidebarProvider {
     this.secretManager = dependencies.secretManager;
     this.usageTracker = dependencies.usageTracker;
     this.providerManager = dependencies.providerManager;
+    this.quotaManager = dependencies.quotaManager;
     this._view = null;
     this.chatProvider = null;
   }
@@ -34,7 +35,8 @@ class FreeCodeSidebarProvider {
       chatController: this.chatController,
       secretManager: this.secretManager,
       usageTracker: this.usageTracker,
-      providerManager: this.providerManager
+      providerManager: this.providerManager,
+      quotaManager: this.quotaManager
     });
 
     this.chatProvider.attachWebview(webviewView);

@@ -1,7 +1,9 @@
+'use strict';
+
 /**
- * Provider QuickPick for FreeCode AI Status Bar.
- * Opens an interactive picker to switch active providers, view honest per-provider usage,
- * toggle inline suggestions, and launch configuration actions.
+ * Provider QuickPick for Laven Status Bar.
+ * Allows switching providers, changing completion modes (Hybrid/Local/Cloud),
+ * viewing honest quota usage, clearing suggestion cache, and resetting cooldowns.
  */
 
 const vscode = require('vscode');
@@ -15,7 +17,7 @@ class ProviderQuickPick {
    * @param {import('../security/secretManager').SecretManager} options.secretManager
    * @param {import('../usage/usageTracker').UsageTracker} options.usageTracker
    * @param {import('../chat/chatController').ChatController} [options.chatController]
-   * @param {import('../../agent/agentManager').AgentManager} [options.agentManager]
+   * @param {import('../quota/smartQuotaManager').SmartQuotaManager} [options.quotaManager]
    * @param {import('./statusBarManager').StatusBarManager} [options.statusBarManager]
    * @param {object} [options.sidebarProvider]
    */
@@ -24,17 +26,17 @@ class ProviderQuickPick {
     secretManager,
     usageTracker,
     chatController,
-    agentManager,
+    quotaManager,
     statusBarManager,
     sidebarProvider
   }) {
-    this.providerManager = providerManager;
-    this.secretManager = secretManager;
-    this.usageTracker = usageTracker;
-    this.chatController = chatController;
-    this.agentManager = agentManager;
+    this.providerManager  = providerManager;
+    this.secretManager    = secretManager;
+    this.usageTracker     = usageTracker;
+    this.chatController   = chatController;
+    this.quotaManager     = quotaManager;
     this.statusBarManager = statusBarManager;
-    this.sidebarProvider = sidebarProvider;
+    this.sidebarProvider  = sidebarProvider;
   }
 
   /**
@@ -44,7 +46,8 @@ class ProviderQuickPick {
   async show() {
     const activeProvider = this.providerManager ? this.providerManager.getActiveProvider() : null;
     const configuredList = this.providerManager ? await this.providerManager.getConfiguredProviders() : [];
-    const inlineEnabled = this.agentManager ? this.agentManager.isEnabled() : true;
+    const inlineEnabled = this.quotaManager ? this.quotaManager.getConfig('enabled', true) : true;
+    const currentMode = this.quotaManager ? this.quotaManager.getCompletionMode() : 'hybrid';
 
     const items = [];
 
@@ -54,14 +57,14 @@ class ProviderQuickPick {
         const meta = PROVIDER_METADATA[pid] || { name: pid };
         const cfg = await this.providerManager.getProviderConfiguration(pid);
         const isActive = pid === activeProvider;
-        const metrics = UsageDisplay.getProviderMetrics(pid, this.usageTracker);
+        const metrics = UsageDisplay.getProviderMetrics(pid, this.usageTracker, this.quotaManager);
 
         const checkIcon = isActive ? '$(check) ' : '$(circle-outline) ';
         const activeLabel = isActive ? ' (Active)' : '';
 
         items.push({
           label: `${checkIcon}${meta.name}${activeLabel}`,
-          description: `Model: ${cfg.model || 'Default'}`,
+          description: `Model: ${cfg.model || 'Default'} • Priority #${cfg.priority || 99}`,
           detail: `API Usage: ${metrics.statusText} • ${metrics.detail}`,
           action: 'selectProvider',
           providerId: pid,
@@ -77,31 +80,57 @@ class ProviderQuickPick {
       });
     }
 
-    // 2. Separator
+    // 2. Separator: Modes & Controls
     const separatorKind = vscode.QuickPickItemKind ? vscode.QuickPickItemKind.Separator : undefined;
     if (separatorKind !== undefined) {
       items.push({
-        label: 'Actions & Settings',
+        label: 'Completion Mode & Controls',
         kind: separatorKind
       });
     }
 
-    // 3. Action Items
+    // 3. Mode Switcher
+    const modeLabels = {
+      hybrid: 'Hybrid (Local Ollama first + Cloud fallback)',
+      local: 'Local Only (Ollama offline inference)',
+      cloud: 'Cloud Only (Skip local Ollama)'
+    };
+
+    items.push({
+      label: `$(sync) Completion Strategy: ${currentMode.toUpperCase()}`,
+      description: modeLabels[currentMode] || currentMode,
+      detail: 'Click to switch between Hybrid, Local-Only, or Cloud-Only',
+      action: 'switchMode'
+    });
+
     items.push({
       label: `$(sparkle) Inline Code Suggestions: ${inlineEnabled ? 'ON' : 'OFF'}`,
       description: inlineEnabled ? 'Click to disable ghost-text completions' : 'Click to enable ghost-text completions',
       action: 'toggleInline'
     });
 
+    if (separatorKind !== undefined) {
+      items.push({
+        label: 'Actions & Maintenance',
+        kind: separatorKind
+      });
+    }
+
     items.push({
-      label: '$(plug) Configure AI Provider...',
-      description: 'Add API key or change model configuration',
+      label: '$(trash) Clear Suggestion Cache',
+      description: this.quotaManager ? `${this.quotaManager.cache.stats.hits} hits, ${this.quotaManager.cache.stats.requestsAvoided} avoided` : 'Clear in-memory suggestions',
+      action: 'clearCache'
+    });
+
+    items.push({
+      label: '$(plug) Configure AI Provider API Key...',
+      description: 'Add or update API key in SecretStorage',
       action: 'configureProvider'
     });
 
     items.push({
       label: '$(graph) Open Usage Dashboard',
-      description: 'View token counts, efficiency savings, and rate limits',
+      description: 'View token counts, velocity, and quota savings',
       action: 'openDashboard'
     });
 
@@ -112,7 +141,7 @@ class ProviderQuickPick {
     });
 
     const selected = await vscode.window.showQuickPick(items, {
-      placeHolder: 'FreeCode AI — Switch Provider or Adjust Settings',
+      placeHolder: 'Laven Assistant — Switch Provider or Adjust Quota Settings',
       matchOnDescription: true,
       matchOnDetail: true
     });
@@ -132,14 +161,10 @@ class ProviderQuickPick {
         if (this.chatController) {
           await this.chatController.setProvider(targetPid);
         }
-        if (this.agentManager) {
-          this.agentManager.invalidateDirectConnection();
-        }
         if (this.statusBarManager) {
           await this.statusBarManager.update();
         }
 
-        // Notify sidebar webview if active
         if (this.sidebarProvider) {
           try {
             this.sidebarProvider.postMessage({
@@ -150,7 +175,7 @@ class ProviderQuickPick {
               type: 'providersListUpdated',
               providers: await this.providerManager.getAllProviderStatuses()
             });
-          } catch (e) {}
+          } catch (_) {}
         }
 
         vscode.window.showInformationMessage(
@@ -159,15 +184,46 @@ class ProviderQuickPick {
         break;
       }
 
-      case 'toggleInline': {
-        if (this.agentManager) {
-          const newState = await this.agentManager.toggleEnabled();
+      case 'switchMode': {
+        const modes = [
+          { label: 'Hybrid (Recommended)', id: 'hybrid', description: 'Local Ollama first; cloud fallback on failure' },
+          { label: 'Local Only', id: 'local', description: 'Ollama only; zero cloud requests; completely offline' },
+          { label: 'Cloud Only', id: 'cloud', description: 'Skip local Ollama; use cloud providers in priority order' }
+        ];
+
+        const pickedMode = await vscode.window.showQuickPick(modes, {
+          placeHolder: 'Select Inline Completion Mode'
+        });
+
+        if (pickedMode && this.quotaManager) {
+          await this.quotaManager.setCompletionMode(pickedMode.id);
           if (this.statusBarManager) {
             await this.statusBarManager.update();
           }
           vscode.window.showInformationMessage(
-            `Laven: Inline code suggestions ${newState ? 'enabled' : 'disabled'}.`
+            `Laven: Completion mode set to ${pickedMode.label}.`
           );
+        }
+        break;
+      }
+
+      case 'toggleInline': {
+        const cfg = vscode.workspace.getConfiguration('laven.inline');
+        const current = cfg.get('enabled', true);
+        await cfg.update('enabled', !current, vscode.ConfigurationTarget.Global);
+        if (this.statusBarManager) {
+          await this.statusBarManager.update();
+        }
+        vscode.window.showInformationMessage(
+          `Laven: Inline suggestions ${!current ? 'enabled' : 'disabled'}.`
+        );
+        break;
+      }
+
+      case 'clearCache': {
+        if (this.quotaManager && this.quotaManager.cache) {
+          this.quotaManager.cache.clear();
+          vscode.window.showInformationMessage('Laven: Suggestion cache cleared.');
         }
         break;
       }

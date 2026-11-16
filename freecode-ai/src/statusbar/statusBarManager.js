@@ -1,7 +1,8 @@
+'use strict';
+
 /**
- * Status Bar Manager for FreeCode AI.
- * Creates and updates the native VS Code bottom status bar item,
- * displaying active provider, model, inline suggestion state, and API usage.
+ * Status Bar Manager for Laven / FreeCode AI.
+ * Displays active provider, model, completion mode, and quota health in VS Code status bar.
  */
 
 const vscode = require('vscode');
@@ -13,19 +14,19 @@ class StatusBarManager {
    * @param {object} options
    * @param {import('../providers/providerManager').ProviderManager} options.providerManager
    * @param {import('../usage/usageTracker').UsageTracker} options.usageTracker
-   * @param {import('../../agent/agentManager').AgentManager} [options.agentManager]
+   * @param {import('../quota/smartQuotaManager').SmartQuotaManager} [options.quotaManager]
    */
-  constructor({ providerManager, usageTracker, agentManager }) {
+  constructor({ providerManager, usageTracker, quotaManager }) {
     this.providerManager = providerManager;
     this.usageTracker = usageTracker;
-    this.agentManager = agentManager;
+    this.quotaManager = quotaManager;
 
     this.statusBarItem = null;
     this._createStatusBarItem();
   }
 
-  setAgentManager(agentManager) {
-    this.agentManager = agentManager;
+  setQuotaManager(qm) {
+    this.quotaManager = qm;
   }
 
   _createStatusBarItem() {
@@ -47,10 +48,12 @@ class StatusBarManager {
     }
 
     const activeProvider = this.providerManager ? this.providerManager.getActiveProvider() : null;
-    const inlineEnabled = this.agentManager ? this.agentManager.isEnabled() : true;
+    const inlineEnabled = this.quotaManager ? this.quotaManager.getConfig('enabled', true) : true;
+    const mode = this.quotaManager ? this.quotaManager.getCompletionMode() : 'hybrid';
+    const modeShort = mode.charAt(0).toUpperCase() + mode.slice(1);
 
     if (!activeProvider) {
-      this.statusBarItem.text = '$(freecode-logo) Laven: Configure';
+      this.statusBarItem.text = '$(sparkle) Laven: Configure';
       this.statusBarItem.tooltip = 'Laven: Click to configure an AI provider';
       return;
     }
@@ -64,15 +67,20 @@ class StatusBarManager {
       } catch (e) {}
     }
 
-    // Format concise text for status bar
     const shortName = meta.name.replace(' (Local)', '').replace(' Workers AI', '').replace(' AI', '');
-    const shortModel = model ? (model.length > 18 ? model.slice(0, 16) + '…' : model) : '';
+    const shortModel = model ? (model.length > 14 ? model.slice(0, 12) + '…' : model) : '';
     const modelTag = shortModel ? ` (${shortModel})` : '';
 
-    this.statusBarItem.text = `$(freecode-logo) Laven: ${shortName}${modelTag}`;
+    this.statusBarItem.text = `$(sparkle) Laven [${modeShort}]: ${shortName}${modelTag}`;
 
-    // Format rich Markdown tooltip
-    const tooltipText = UsageDisplay.formatTooltip(activeProvider, model, this.usageTracker, inlineEnabled);
+    const tooltipText = UsageDisplay.formatTooltip(
+      activeProvider,
+      model,
+      this.usageTracker,
+      inlineEnabled,
+      this.quotaManager
+    );
+
     if (typeof vscode.MarkdownString === 'function') {
       const md = new vscode.MarkdownString(tooltipText);
       md.isTrusted = true;

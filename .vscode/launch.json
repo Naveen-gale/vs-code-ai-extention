@@ -6,7 +6,8 @@
       "type": "extensionHost",
       "request": "launch",
       "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}/freecode-ai"
+        "--extensionDevelopmentPath=${workspaceFolder}/freecode-ai",
+        "--disable-extension=loczek.next-js-ts-snippets"
       ],
       "outFiles": [
         "${workspaceFolder}/freecode-ai/src/**/*.js"

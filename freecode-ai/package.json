@@ -1,7 +1,7 @@
 {
-  "name": "laven",
-  "displayName": "Laven",
-  "description": "An open, multi-provider AI coding assistant for Visual Studio Code.",
+  "name": "freecode-ai",
+  "displayName": "FreeCode AI",
+  "description": "A free-first AI coding assistant for Visual Studio Code.",
   "version": "0.1.0",
   "publisher": "naveen",
   "engines": {
@@ -23,27 +23,14 @@
     "onCommand:freecodeAI.newChat",
     "onCommand:freecodeAI.openDashboard",
     "onCommand:freecodeAI.simulateFailover",
-    "onCommand:freecodeAI.resetRateLimits",
-    "onCommand:freecodeAI.openProviderPopup",
-    "onCommand:freecodeAI.toggleInline",
-    "onCommand:freecodeAI.triggerInline"
+    "onCommand:freecodeAI.resetRateLimits"
   ],
   "contributes": {
-    "icons": {
-      "laven-logo": {
-        "description": "Laven Logo",
-        "default": "./media/icon.svg"
-      },
-      "freecode-logo": {
-        "description": "Laven Logo",
-        "default": "./media/icon.svg"
-      }
-    },
     "viewsContainers": {
       "activitybar": [
         {
           "id": "freecodeAI",
-          "title": "Laven",
+          "title": "FreeCode AI",
           "icon": "media/icon.svg"
         }
       ]
@@ -53,123 +40,147 @@
         {
           "type": "webview",
           "id": "freecodeAI.sidebar",
-          "name": "Laven Assistant"
+          "name": "FreeCode AI Assistant"
         }
       ]
     },
     "commands": [
       {
         "command": "freecodeAI.openSidebar",
-        "title": "Laven: Open Sidebar"
+        "title": "FreeCode AI: Open Sidebar"
       },
       {
         "command": "freecodeAI.selectProvider",
-        "title": "Laven: Select AI Provider"
+        "title": "FreeCode AI: Select AI Provider"
       },
       {
         "command": "freecodeAI.showStatus",
-        "title": "Laven: Show Extension Status"
+        "title": "FreeCode AI: Show Extension Status"
       },
       {
         "command": "freecodeAI.setApiKey",
-        "title": "Laven: Set Provider API Key"
+        "title": "FreeCode AI: Set Provider API Key"
       },
       {
         "command": "freecodeAI.deleteProvider",
-        "title": "Laven: Delete Provider Configuration"
+        "title": "FreeCode AI: Delete Provider Configuration"
       },
       {
         "command": "freecodeAI.newChat",
-        "title": "Laven: Start New Chat"
+        "title": "FreeCode AI: Start New Chat"
       },
       {
         "command": "freecodeAI.openDashboard",
-        "title": "Laven: Open Usage Dashboard"
+        "title": "FreeCode AI: Open Usage Dashboard"
       },
       {
         "command": "freecodeAI.simulateFailover",
-        "title": "Laven: Test Rate Limit / Failover Switch"
+        "title": "FreeCode AI: Test Rate Limit / Failover Switch"
       },
       {
         "command": "freecodeAI.resetRateLimits",
-        "title": "Laven: Reset Rate Limit Cooldowns"
+        "title": "FreeCode AI: Reset Rate Limit Cooldowns"
       },
       {
         "command": "freecodeAI.openProviderPopup",
-        "title": "Laven: Switch Provider / Manage Status"
+        "title": "Laven: Open Provider Menu"
       },
       {
         "command": "freecodeAI.toggleInline",
-        "title": "Laven: Toggle Inline Code Suggestions"
+        "title": "Laven: Toggle Inline Suggestions"
       },
       {
-        "command": "freecodeAI.triggerInline",
-        "title": "Laven: Trigger Inline Code Suggestion"
-      }
-    ],
-    "keybindings": [
-      {
-        "command": "freecodeAI.triggerInline",
-        "key": "alt+/",
-        "mac": "alt+/",
-        "when": "editorTextFocus"
+        "command": "freecodeAI.clearSuggestionCache",
+        "title": "Laven: Clear Suggestion Cache"
       },
       {
-        "command": "freecodeAI.triggerInline",
-        "key": "alt+\\",
-        "mac": "alt+\\",
-        "when": "editorTextFocus"
-      },
-      {
-        "command": "freecodeAI.triggerInline",
-        "key": "ctrl+alt+space",
-        "mac": "cmd+alt+space",
-        "when": "editorTextFocus"
+        "command": "freecodeAI.switchCompletionMode",
+        "title": "Laven: Switch Completion Mode"
       }
     ],
     "configuration": {
       "title": "Laven",
       "properties": {
-        "freecodeAI.inline.enabled": {
+        "laven.inline.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable or disable Laven inline code suggestions."
+          "description": "Enable or disable intelligent inline code completions."
         },
-        "freecodeAI.inline.debounceDelay": {
-          "type": "number",
-          "default": 150,
-          "minimum": 50,
-          "maximum": 3000,
-          "description": "Delay before requesting an inline code suggestion."
+        "laven.inline.completionMode": {
+          "type": "string",
+          "enum": ["hybrid", "local", "cloud"],
+          "default": "hybrid",
+          "description": "Completion strategy: 'hybrid' (local-first with cloud fallback), 'local' (Ollama only), or 'cloud' (cloud only)."
         },
-        "freecodeAI.inline.maxContextLines": {
-          "type": "number",
-          "default": 40,
-          "minimum": 10,
-          "maximum": 300,
-          "description": "Maximum nearby context lines sent to the LLM."
-        },
-        "freecodeAI.inline.maxCompletionTokens": {
-          "type": "number",
-          "default": 64,
-          "minimum": 16,
-          "maximum": 1024,
-          "description": "Maximum generated completion tokens."
-        },
-        "freecodeAI.inline.cacheEnabled": {
+        "laven.inline.localFirst": {
           "type": "boolean",
           "default": true,
-          "description": "Enable inline suggestion caching."
+          "description": "Prefer local Ollama inference before hitting cloud provider quotas."
         },
-        "freecodeAI.inline.useActiveProvider": {
+        "laven.inline.localOnly": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enforce local-only inference; zero requests are ever sent to cloud providers."
+        },
+        "laven.inline.cloudFallbackEnabled": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically use the currently active AI provider and model."
+          "description": "Allow falling back to cloud providers when local Ollama is offline or times out."
+        },
+        "laven.inline.debounceMs": {
+          "type": "number",
+          "default": 1200,
+          "description": "Milliseconds of typing pause required before an inline completion request is dispatched."
+        },
+        "laven.inline.maxInputTokens": {
+          "type": "number",
+          "default": 1500,
+          "description": "Maximum bounded input tokens (prefix + suffix) to prevent excessive quota consumption."
+        },
+        "laven.inline.maxOutputTokens": {
+          "type": "number",
+          "default": 96,
+          "description": "Maximum generated output tokens for inline completions."
+        },
+        "laven.inline.cacheEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable in-memory LRU suggestion caching to eliminate duplicate API requests."
+        },
+        "laven.inline.cacheTtlMs": {
+          "type": "number",
+          "default": 60000,
+          "description": "Time-to-live for cached suggestions in milliseconds."
+        },
+        "laven.inline.maxConcurrentRequests": {
+          "type": "number",
+          "default": 2,
+          "description": "Maximum concurrent inline requests."
+        },
+        "laven.inline.maxRequestsPerMinute": {
+          "type": "number",
+          "default": 30,
+          "description": "Local rate limit protection ceiling."
+        },
+        "laven.inline.dailyRequestBudget": {
+          "type": "number",
+          "default": 500,
+          "description": "Local daily request budget protection."
+        },
+        "laven.inline.maxEstimatedTokensPerDay": {
+          "type": "number",
+          "default": 200000,
+          "description": "Local daily estimated token ceiling."
+        },
+        "laven.providers.cooldownEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enforce automatic cooldown periods on HTTP 429 rate limits."
         }
       }
     }
   },
   "scripts": {
-    "test": "node ./test/day1.test.js && node ./test/upgrade.test.js && node ./test/multiProvider.test.js && node ./test/day2Ui.test.js && node ./test/newProviders.test.js && node ./test/inlineAndStatusbar.test.js"
+    "test": "node ./test/day1.test.js && node ./test/upgrade.test.js && node ./test/multiProvider.test.js && node ./test/day2Ui.test.js && node ./test/newProviders.test.js && node ./test/autocomplete.test.js && node ./test/quotaAndInline.test.js"
   }
 }

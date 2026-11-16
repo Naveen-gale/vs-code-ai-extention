@@ -56,18 +56,29 @@ class SecretManager {
    */
   async getApiKey(providerId) {
     if (!providerId) return null;
-    const keyName = this._getKeyName(providerId);
+    const norm = (providerId || '').toLowerCase();
+    const candidateKeys = [
+      `freecode-ai.apiKey.${norm}`,
+      `freecodeAI.apiKey.${norm}`,
+      `laven.apiKey.${norm}`
+    ];
 
     if (this.storage && typeof this.storage.get === 'function') {
-      try {
-        const key = await this.storage.get(keyName);
-        if (key) return key;
-      } catch (err) {
-        console.warn(`FreeCode AI: Failed to read key from SecretStorage for ${providerId}:`, err.message);
+      for (const k of candidateKeys) {
+        try {
+          const val = await this.storage.get(k);
+          if (val) return val;
+        } catch (_) {}
       }
     }
 
-    return this._memoryFallback.get(keyName) || null;
+    for (const k of candidateKeys) {
+      if (this._memoryFallback.has(k)) {
+        return this._memoryFallback.get(k);
+      }
+    }
+
+    return null;
   }
 
   /**

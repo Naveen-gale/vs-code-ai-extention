@@ -109,11 +109,17 @@ class UsageTracker {
     pStats.lastError = errRecord;
     mStats.lastError = errRecord;
 
-    if (classification.category === ErrorCategory.RATE_LIMIT || classification.category === ErrorCategory.QUOTA_EXHAUSTED) {
+    if (
+      classification.category === ErrorCategory.RATE_LIMIT ||
+      classification.category === ErrorCategory.QUOTA_EXHAUSTED ||
+      classification.category === ErrorCategory.NETWORK_ERROR ||
+      classification.category === ErrorCategory.INVALID_API_KEY ||
+      classification.category === ErrorCategory.TIMEOUT
+    ) {
       pStats.rateLimitErrors += 1;
       mStats.rateLimitErrors += 1;
 
-      const duration = classification.retryAfterSeconds || 60;
+      const duration = classification.retryAfterSeconds || (classification.category === ErrorCategory.INVALID_API_KEY ? 300 : 60);
       this.limitTracker.setCooldown(
         providerId,
         duration,
