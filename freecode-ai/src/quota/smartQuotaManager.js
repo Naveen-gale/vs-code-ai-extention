@@ -237,14 +237,7 @@ class SmartQuotaManager {
         continue;
       }
 
-      // D. Check RPM / Velocity Headroom
-      const velocity = this.usageTracker.limitTracker.getVelocityInfo(candidate.id);
-      if (velocity && velocity.isNearingLimit) {
-        this._log(`Cloud provider skipped: ${candidate.name} velocity near limit (${velocity.rpm} RPM, load ${velocity.loadPercent}%).`);
-        continue;
-      }
-
-      // E. Check Local Daily Request & Token Budgets
+      // D. Check Local Daily Request & Token Budgets
       const dailyReqBudget = this.getConfig('dailyRequestBudget', 500);
       if (this.stats.dailyRequestsCount >= dailyReqBudget) {
         this._log(`Daily request budget reached (${this.stats.dailyRequestsCount}/${dailyReqBudget}).`);
@@ -375,14 +368,14 @@ class SmartQuotaManager {
     breaker.failCount++;
     breaker.lastStateChange = Date.now();
 
-    if (
-      result.category === 'RATE_LIMIT' ||
-      result.category === 'QUOTA_EXHAUSTED' ||
-      result.category === 'NETWORK_ERROR' ||
-      result.category === 'INVALID_API_KEY' ||
-      result.category === 'TIMEOUT' ||
-      breaker.failCount >= 1
-    ) {
+    // Update circuit breaker:
+    // Only actual RATE_LIMIT, QUOTA_EXHAUSTED, INVALID_API_KEY, or local Ollama offline immediately opens circuit.
+    // Transient timeouts or cloud network hiccups require repeated consecutive failures (>= 3).
+    const isRealLimit = result.category === 'RATE_LIMIT' || result.category === 'QUOTA_EXHAUSTED';
+    const isAuthErr = result.category === 'INVALID_API_KEY';
+    const isOllamaOffline = (providerId === PROVIDERS.OLLAMA || providerId === 'ollama') && result.category === 'NETWORK_ERROR';
+
+    if (isRealLimit || isAuthErr || isOllamaOffline || breaker.failCount >= 3) {
       breaker.state = CircuitState.OPEN;
       this._log(`Circuit OPEN for ${providerId} (${result.category}, cooldown active).`);
     }
@@ -391,6 +384,60 @@ class SmartQuotaManager {
     this._log(`API key preserved after error on ${providerId} (${result.category}).`);
 
     return result;
+  }
+
+  /**
+   * Notifies the user that a provider reached its API rate limit and prompts them to switch providers.
+   * Throttled to at most once per 30 seconds per provider so typing doesn't create dialog spam.
+   * @param {string} providerId
+   * @param {object} [classification]
+   */
+  async notifyRateLimitAndPromptSwitch(providerId, classification = {}) {
+    if (!providerId) return;
+    if (!this._lastRateLimitNotification) {
+      this._lastRateLimitNotification = new Map();
+    }
+    const now = Date.now();
+    const lastNotified = this._lastRateLimitNotification.get(providerId) || 0;
+    if (now - lastNotified < 30000) return;
+    this._lastRateLimitNotification.set(providerId, now);
+
+    const meta = PROVIDER_METADATA[providerId] || { name: providerId };
+    const provName = meta.name || providerId;
+    const cd = this.usageTracker ? this.usageTracker.getCooldownInfo(providerId) : null;
+    const retrySec = (cd && cd.remainingSeconds) ? `${cd.remainingSeconds}s` : (classification.retryAfterSeconds ? `${classification.retryAfterSeconds}s` : '60s');
+
+    let nextCandidate = null;
+    try {
+      if (this.providerManager) {
+        nextCandidate = await this.providerManager.getNextFallbackProvider(providerId, this.usageTracker);
+      }
+    } catch (_) {}
+
+    const switchBtn = nextCandidate ? `Switch to ${nextCandidate.name}` : 'Switch Provider';
+    const manageBtn = 'Open Provider Menu';
+
+    if (typeof vscode !== 'undefined' && vscode.window && vscode.window.showWarningMessage) {
+      vscode.window.showWarningMessage(
+        `Laven: Provider "${provName}" reached its API rate limit (${retrySec} cooldown). Please switch provider.`,
+        switchBtn,
+        manageBtn,
+        'Dismiss'
+      ).then(async (selection) => {
+        if (selection === switchBtn) {
+          if (nextCandidate && this.providerManager) {
+            await this.providerManager.setActiveProvider(nextCandidate.id);
+            if (vscode.window.showInformationMessage) {
+              vscode.window.showInformationMessage(`Laven: Switched active provider to ${nextCandidate.name}.`);
+            }
+          } else if (vscode.commands && vscode.commands.executeCommand) {
+            await vscode.commands.executeCommand('freecodeAI.selectProvider');
+          }
+        } else if (selection === manageBtn && vscode.commands && vscode.commands.executeCommand) {
+          await vscode.commands.executeCommand('freecodeAI.openProviderPopup');
+        }
+      });
+    }
   }
 
   // --------------------------------------------------------------------------
