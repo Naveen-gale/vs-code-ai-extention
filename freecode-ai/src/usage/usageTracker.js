@@ -109,17 +109,22 @@ class UsageTracker {
     pStats.lastError = errRecord;
     mStats.lastError = errRecord;
 
-    if (
-      classification.category === ErrorCategory.RATE_LIMIT ||
-      classification.category === ErrorCategory.QUOTA_EXHAUSTED ||
-      classification.category === ErrorCategory.NETWORK_ERROR ||
-      classification.category === ErrorCategory.INVALID_API_KEY ||
-      classification.category === ErrorCategory.TIMEOUT
-    ) {
-      pStats.rateLimitErrors += 1;
-      mStats.rateLimitErrors += 1;
+    const isRateLimit = classification.category === ErrorCategory.RATE_LIMIT || classification.category === ErrorCategory.QUOTA_EXHAUSTED;
+    const isAuthError = classification.category === ErrorCategory.INVALID_API_KEY;
+    const isLocalOffline = (providerId === 'ollama' || providerId === 'Ollama') && classification.category === ErrorCategory.NETWORK_ERROR;
 
-      const duration = classification.retryAfterSeconds || (classification.category === ErrorCategory.INVALID_API_KEY ? 300 : 60);
+    // Only set cooldown when:
+    // 1. Remote API returned an actual rate limit (HTTP 429 / quota exhausted)
+    // 2. Authentication error (invalid API key) to protect user from continuous auth loops
+    // 3. Local Ollama server is offline (to allow immediate cloud fallback without hanging)
+    // NEVER put a provider into cooldown on TIMEOUT or transient cloud network glitches!
+    if (isRateLimit || isAuthError || isLocalOffline) {
+      if (isRateLimit) {
+        pStats.rateLimitErrors += 1;
+        mStats.rateLimitErrors += 1;
+      }
+
+      const duration = classification.retryAfterSeconds || (isAuthError ? 300 : (isLocalOffline ? 30 : 60));
       this.limitTracker.setCooldown(
         providerId,
         duration,

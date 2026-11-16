@@ -152,8 +152,20 @@ class LavenInlineCompletionProvider {
           timeoutMs: selection.isLocal ? 10000 : 8000
         });
       } catch (err) {
-        // Record failure (sets cooldown and circuit breaker without touching credentials)
-        await this.quotaManager.recordFailure(providerId, model, err);
+        // If aborted by user typing or cancellation, exit cleanly without recording failure
+        if (token.isCancellationRequested || abortCtrl.signal.aborted || err?.name === 'AbortError' || (err?.message && err.message.toLowerCase().includes('aborted'))) {
+          return [];
+        }
+
+        // Record failure (sets cooldown and circuit breaker only on verified rate limits / quota exhaustion)
+        const classification = await this.quotaManager.recordFailure(providerId, model, err);
+
+        // If remote API hit actual rate limits, prompt user to switch providers immediately
+        if (classification && (classification.category === 'RATE_LIMIT' || classification.category === 'QUOTA_EXHAUSTED')) {
+          if (typeof this.quotaManager.notifyRateLimitAndPromptSwitch === 'function') {
+            this.quotaManager.notifyRateLimitAndPromptSwitch(providerId, classification);
+          }
+        }
 
         // In Hybrid mode: If local Ollama failed, attempt cloud fallback
         if (selection.isLocal && this.quotaManager.isCloudFallbackEnabled()) {
@@ -250,7 +262,15 @@ class LavenInlineCompletionProvider {
           return [this._buildCompletionItem(clean, position, candidate.id, candidate.model, false)];
         }
       } catch (cloudErr) {
-        await this.quotaManager.recordFailure(candidate.id, candidate.model, cloudErr);
+        if (token.isCancellationRequested || cloudErr?.name === 'AbortError' || (cloudErr?.message && cloudErr.message.toLowerCase().includes('aborted'))) {
+          continue;
+        }
+        const classification = await this.quotaManager.recordFailure(candidate.id, candidate.model, cloudErr);
+        if (classification && (classification.category === 'RATE_LIMIT' || classification.category === 'QUOTA_EXHAUSTED')) {
+          if (typeof this.quotaManager.notifyRateLimitAndPromptSwitch === 'function') {
+            this.quotaManager.notifyRateLimitAndPromptSwitch(candidate.id, classification);
+          }
+        }
       }
     }
     return [];

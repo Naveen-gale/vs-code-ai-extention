@@ -579,6 +579,71 @@ class MockMemento {
     assert.strictEqual(typeof qp.show, 'function');
   });
 
+  // 31. AbortError or transient timeout does not set cooldown on cloud provider
+  await test('TEST 31: AbortError and transient timeouts on cloud providers do NOT trigger cooldown', async () => {
+    const h = createTestHarness();
+    await h.secretManager.storeApiKey(PROVIDERS.GROQ, 'groq-key');
+    await h.providerManager.setProviderConfiguration(PROVIDERS.GROQ, { priority: 1, model: 'llama-3' });
+
+    // Simulate an aborted request (user typed another key)
+    const abortErr = new Error('The user aborted a request.');
+    abortErr.name = 'AbortError';
+    await h.quotaManager.recordFailure(PROVIDERS.GROQ, 'llama-3', abortErr);
+
+    let cd = h.usageTracker.getCooldownInfo(PROVIDERS.GROQ);
+    assert.strictEqual(cd.active, false, 'AbortError must NEVER put provider into cooldown');
+
+    // Simulate transient timeout
+    const timeoutErr = new Error('Request timed out after 8000ms');
+    timeoutErr.status = 408;
+    await h.quotaManager.recordFailure(PROVIDERS.GROQ, 'llama-3', timeoutErr);
+
+    cd = h.usageTracker.getCooldownInfo(PROVIDERS.GROQ);
+    assert.strictEqual(cd.active, false, 'Transient timeouts must NOT put provider into cooldown');
+  });
+
+  // 32. HTTP 429 triggers notifyRateLimitAndPromptSwitch
+  await test('TEST 32: HTTP 429 triggers rate-limit notification and prompts user to switch provider', async () => {
+    const h = createTestHarness();
+    await h.secretManager.storeApiKey(PROVIDERS.GROQ, 'groq-key');
+    await h.providerManager.setProviderConfiguration(PROVIDERS.GROQ, { priority: 1, model: 'llama-3' });
+    await h.secretManager.storeApiKey(PROVIDERS.GEMINI, 'gemini-key');
+    await h.providerManager.setProviderConfiguration(PROVIDERS.GEMINI, { priority: 2, model: 'gemini-flash' });
+
+    let warningShown = false;
+    let warningMsg = '';
+    mockVscode.window.showWarningMessage = async (msg) => {
+      warningShown = true;
+      warningMsg = msg;
+      return 'Dismiss';
+    };
+
+    const res = await h.quotaManager.recordFailure(PROVIDERS.GROQ, 'llama-3', { status: 429, message: 'Too Many Requests' });
+    assert.strictEqual(res.category, 'RATE_LIMIT');
+
+    await h.quotaManager.notifyRateLimitAndPromptSwitch(PROVIDERS.GROQ, res);
+    assert.strictEqual(warningShown, true, 'Must show warning message when rate limit hit');
+    assert.ok(warningMsg.includes('Groq') && warningMsg.includes('rate limit'), 'Message should identify provider and rate limit');
+  });
+
+  // 33. Cloud providers are not prematurely skipped by token velocity estimation
+  await test('TEST 33: Cloud providers are eligible and not prematurely skipped before real 429 occurs', async () => {
+    const h = createTestHarness();
+    await h.secretManager.storeApiKey(PROVIDERS.GROQ, 'groq-key');
+    await h.providerManager.setProviderConfiguration(PROVIDERS.GROQ, { priority: 1, model: 'llama-3' });
+
+    configStore.set('laven.inline.completionMode', 'cloud');
+
+    // Record 10 requests rapidly (velocity increases)
+    for (let i = 0; i < 10; i++) {
+      h.usageTracker.limitTracker.recordVelocity(PROVIDERS.GROQ, 1000);
+    }
+
+    // Provider should still be selected for inline completions because no 429 error happened!
+    const sel = await h.quotaManager.selectProviderForInline();
+    assert.strictEqual(sel.providerId, PROVIDERS.GROQ, 'Provider must not be blocked prematurely before actual 429');
+  });
+
   console.log('\n================================================================');
   console.log(`TOTAL QUOTA & INLINE TESTS: ${passed + failed}`);
   console.log(`PASSED: ${passed}`);
