@@ -2,11 +2,12 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run FreeCode AI",
+      "name": "Run Laven Extension",
       "type": "extensionHost",
       "request": "launch",
       "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}/freecode-ai"
+        "--extensionDevelopmentPath=${workspaceFolder}/freecode-ai",
+        "--disable-extension=loczek.next-js-ts-snippets"
       ],
       "outFiles": [
         "${workspaceFolder}/freecode-ai/src/**/*.js"

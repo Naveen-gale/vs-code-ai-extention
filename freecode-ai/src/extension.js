@@ -5,6 +5,10 @@ const { UsageTracker } = require("./usage/usageTracker");
 const { ChatController } = require("./chat/chatController");
 const { ProviderManager } = require("./providers/providerManager");
 const { PROVIDERS, PROVIDER_METADATA } = require("./config/providers");
+const { SmartQuotaManager } = require("./quota/smartQuotaManager");
+const { registerInlineProvider } = require("./autocomplete/inlineProvider");
+const { StatusBarManager } = require("./statusbar/statusBarManager");
+const { ProviderQuickPick } = require("./statusbar/providerQuickPick");
 
 /**
  * Activates the FreeCode AI extension.
@@ -19,6 +23,21 @@ function activate(context) {
         const usageTracker = new UsageTracker(context.globalState);
         const providerManager = new ProviderManager(context, secretManager);
 
+        // Initialize Central Smart Quota Manager
+        const quotaManager = new SmartQuotaManager({
+            providerManager,
+            secretManager,
+            usageTracker,
+            context
+        });
+
+        // Register Intelligent Inline Code Completion Provider
+        registerInlineProvider(context, {
+            quotaManager,
+            secretManager,
+            providerManager
+        });
+
         const activeProvider = providerManager.getActiveProvider();
         const chatController = new ChatController({
             secretManager,
@@ -32,7 +51,26 @@ function activate(context) {
             chatController,
             secretManager,
             usageTracker,
-            providerManager
+            providerManager,
+            quotaManager
+        });
+
+        // Initialize Native Status Bar and QuickPick Provider
+        const statusBarManager = new StatusBarManager({
+            providerManager,
+            usageTracker,
+            quotaManager
+        });
+        context.subscriptions.push(statusBarManager);
+
+        const providerQuickPick = new ProviderQuickPick({
+            providerManager,
+            secretManager,
+            usageTracker,
+            chatController,
+            quotaManager,
+            statusBarManager,
+            sidebarProvider
         });
 
         context.subscriptions.push(
@@ -270,6 +308,78 @@ function activate(context) {
                         await sidebarProvider.chatProvider.sendProvidersList();
                         await sidebarProvider.chatProvider.sendStateUpdate();
                     }
+                }
+            )
+        );
+
+        // Command: Open Provider QuickPick Menu
+        context.subscriptions.push(
+            vscode.commands.registerCommand(
+                "freecodeAI.openProviderPopup",
+                async () => {
+                    await providerQuickPick.show();
+                }
+            )
+        );
+
+        // Command: Toggle Inline Code Suggestions
+        context.subscriptions.push(
+            vscode.commands.registerCommand(
+                "freecodeAI.toggleInline",
+                async () => {
+                    const cfg = vscode.workspace.getConfiguration('laven.inline');
+                    const current = cfg.get('enabled', true);
+                    await cfg.update('enabled', !current, vscode.ConfigurationTarget.Global);
+                    await statusBarManager.update();
+                    vscode.window.showInformationMessage(
+                        `Laven: Inline code suggestions ${!current ? 'enabled' : 'disabled'}.`
+                    );
+                }
+            )
+        );
+
+        // Command: Clear Suggestion Cache
+        context.subscriptions.push(
+            vscode.commands.registerCommand(
+                "freecodeAI.clearSuggestionCache",
+                () => {
+                    quotaManager.cache.clear();
+                    vscode.window.showInformationMessage("Laven: Suggestion cache cleared.");
+                }
+            )
+        );
+
+        // Command: Switch Completion Mode (hybrid/local/cloud)
+        context.subscriptions.push(
+            vscode.commands.registerCommand(
+                "freecodeAI.switchCompletionMode",
+                async (mode) => {
+                    if (mode) {
+                        await quotaManager.setCompletionMode(mode);
+                    } else {
+                        await providerQuickPick.show();
+                    }
+                    await statusBarManager.update();
+                }
+            )
+        );
+
+        // Command: Suggestion Accepted (Internal callback, 0 network requests)
+        context.subscriptions.push(
+            vscode.commands.registerCommand(
+                "freecodeAI.suggestionAccepted",
+                (details) => {
+                    quotaManager.recordAcceptance(details);
+                }
+            )
+        );
+
+        // Command: Suggestion Rejected (Internal callback, 0 network requests)
+        context.subscriptions.push(
+            vscode.commands.registerCommand(
+                "freecodeAI.suggestionRejected",
+                (details) => {
+                    quotaManager.recordRejection(details);
                 }
             )
         );

@@ -20,12 +20,13 @@ class ChatProvider {
    * @param {import('../usage/usageTracker').UsageTracker} options.usageTracker
    * @param {import('../providers/providerManager').ProviderManager} [options.providerManager]
    */
-  constructor({ extensionUri, chatController, secretManager, usageTracker, providerManager = null }) {
+  constructor({ extensionUri, chatController, secretManager, usageTracker, providerManager = null, quotaManager = null }) {
     this.extensionUri = extensionUri;
     this.chatController = chatController;
     this.secretManager = secretManager;
     this.usageTracker = usageTracker;
     this.providerManager = providerManager;
+    this.quotaManager = quotaManager;
     this.fallbackManager = new FallbackManager(providerManager, usageTracker);
     this._view = null;
   }
@@ -770,6 +771,9 @@ class ChatProvider {
       : providerFilter;
 
     const data = this.usageTracker.getDashboardData(p, this.chatController.activeModel);
+    if (this.quotaManager) {
+      data.quota = this.quotaManager.getDashboardData();
+    }
     this.postMessage({
       type: 'dashboardData',
       data

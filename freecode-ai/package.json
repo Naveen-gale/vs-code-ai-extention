@@ -80,10 +80,107 @@
       {
         "command": "freecodeAI.resetRateLimits",
         "title": "FreeCode AI: Reset Rate Limit Cooldowns"
+      },
+      {
+        "command": "freecodeAI.openProviderPopup",
+        "title": "Laven: Open Provider Menu"
+      },
+      {
+        "command": "freecodeAI.toggleInline",
+        "title": "Laven: Toggle Inline Suggestions"
+      },
+      {
+        "command": "freecodeAI.clearSuggestionCache",
+        "title": "Laven: Clear Suggestion Cache"
+      },
+      {
+        "command": "freecodeAI.switchCompletionMode",
+        "title": "Laven: Switch Completion Mode"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Laven",
+      "properties": {
+        "laven.inline.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable or disable intelligent inline code completions."
+        },
+        "laven.inline.completionMode": {
+          "type": "string",
+          "enum": ["hybrid", "local", "cloud"],
+          "default": "hybrid",
+          "description": "Completion strategy: 'hybrid' (local-first with cloud fallback), 'local' (Ollama only), or 'cloud' (cloud only)."
+        },
+        "laven.inline.localFirst": {
+          "type": "boolean",
+          "default": true,
+          "description": "Prefer local Ollama inference before hitting cloud provider quotas."
+        },
+        "laven.inline.localOnly": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enforce local-only inference; zero requests are ever sent to cloud providers."
+        },
+        "laven.inline.cloudFallbackEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow falling back to cloud providers when local Ollama is offline or times out."
+        },
+        "laven.inline.debounceMs": {
+          "type": "number",
+          "default": 1200,
+          "description": "Milliseconds of typing pause required before an inline completion request is dispatched."
+        },
+        "laven.inline.maxInputTokens": {
+          "type": "number",
+          "default": 1500,
+          "description": "Maximum bounded input tokens (prefix + suffix) to prevent excessive quota consumption."
+        },
+        "laven.inline.maxOutputTokens": {
+          "type": "number",
+          "default": 96,
+          "description": "Maximum generated output tokens for inline completions."
+        },
+        "laven.inline.cacheEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable in-memory LRU suggestion caching to eliminate duplicate API requests."
+        },
+        "laven.inline.cacheTtlMs": {
+          "type": "number",
+          "default": 60000,
+          "description": "Time-to-live for cached suggestions in milliseconds."
+        },
+        "laven.inline.maxConcurrentRequests": {
+          "type": "number",
+          "default": 2,
+          "description": "Maximum concurrent inline requests."
+        },
+        "laven.inline.maxRequestsPerMinute": {
+          "type": "number",
+          "default": 30,
+          "description": "Local rate limit protection ceiling."
+        },
+        "laven.inline.dailyRequestBudget": {
+          "type": "number",
+          "default": 500,
+          "description": "Local daily request budget protection."
+        },
+        "laven.inline.maxEstimatedTokensPerDay": {
+          "type": "number",
+          "default": 200000,
+          "description": "Local daily estimated token ceiling."
+        },
+        "laven.providers.cooldownEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enforce automatic cooldown periods on HTTP 429 rate limits."
+        }
+      }
+    }
   },
   "scripts": {
-    "test": "node ./test/day1.test.js && node ./test/upgrade.test.js && node ./test/multiProvider.test.js && node ./test/day2Ui.test.js && node ./test/newProviders.test.js"
+    "test": "node ./test/day1.test.js && node ./test/upgrade.test.js && node ./test/multiProvider.test.js && node ./test/day2Ui.test.js && node ./test/newProviders.test.js && node ./test/autocomplete.test.js && node ./test/quotaAndInline.test.js"
   }
 }

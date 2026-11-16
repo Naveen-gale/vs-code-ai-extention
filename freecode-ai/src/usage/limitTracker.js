@@ -172,8 +172,9 @@ class LimitTracker {
       category = ErrorCategory.MODEL_NOT_FOUND;
     } else if (status === 408 || error?.name === 'AbortError' || combined.includes('timeout') || combined.includes('timed out')) {
       category = ErrorCategory.TIMEOUT;
-    } else if (combined.includes('econnrefused') || combined.includes('fetch failed') || combined.includes('network error') || combined.includes('enotfound')) {
+    } else if (combined.includes('econnrefused') || combined.includes('fetch failed') || combined.includes('network error') || combined.includes('enotfound') || combined.includes('offline')) {
       category = ErrorCategory.NETWORK_ERROR;
+      retryAfterSeconds = retryAfterSeconds || 30;
     } else if (status >= 500 && status < 600) {
       category = ErrorCategory.SERVER_ERROR;
       retryAfterSeconds = retryAfterSeconds || 15;
