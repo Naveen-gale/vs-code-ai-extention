@@ -16,6 +16,7 @@ const ErrorCategory = {
 };
 
 const PROVIDER_RATE_LIMITS = {
+  freellmapi: { maxRpm: 60, maxTpm: 60000, safeRpm: 50, safeTpm: 50000, desc: 'Local router (upstream limits apply)' },
   groq: { maxRpm: 30, maxTpm: 6000, safeRpm: 25, safeTpm: 5000, desc: '30 RPM / 6,000 TPM (Free Tier)' },
   gemini: { maxRpm: 15, maxTpm: 1000000, safeRpm: 12, safeTpm: 800000, desc: '15 RPM / 1M TPM (Free Tier)' },
   openrouter: { maxRpm: 20, maxTpm: 40000, safeRpm: 16, safeTpm: 32000, desc: '20 RPM (Free Tier)' },

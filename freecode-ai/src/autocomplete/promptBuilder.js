@@ -6,6 +6,10 @@
  * and clean instruction format for cloud chat models.
  */
 class PromptBuilder {
+  static buildQualityChatMessages(context) {
+    const { InlineQualityPipeline } = require('./qualityPipeline');
+    return InlineQualityPipeline.buildPrompt(context);
+  }
   /**
    * Build standard FIM prompt for models supporting prefix/suffix markers.
    * @param {{ prefix: string, suffix: string, language?: string }} param0

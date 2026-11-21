@@ -102,6 +102,7 @@ function activate(context) {
                 "freecodeAI.selectProvider",
                 async () => {
                     const providers = [
+                        "FreeLLMAPI",
                         "Google Gemini",
                         "Groq",
                         "OpenRouter",
@@ -122,7 +123,8 @@ function activate(context) {
 
                     if (selected) {
                         let providerKey = PROVIDERS.GEMINI;
-                        if (selected.includes("Groq")) providerKey = PROVIDERS.GROQ;
+                        if (selected.includes("FreeLLMAPI")) providerKey = PROVIDERS.FREELLMAPI;
+                        else if (selected.includes("Groq")) providerKey = PROVIDERS.GROQ;
                         else if (selected.includes("OpenRouter")) providerKey = PROVIDERS.OPENROUTER;
                         else if (selected.includes("Ollama")) providerKey = PROVIDERS.OLLAMA;
                         else if (selected.includes("Cohere")) providerKey = PROVIDERS.COHERE;
@@ -162,6 +164,7 @@ function activate(context) {
                     let providerId = targetProvider;
                     if (!providerId) {
                         const choice = await vscode.window.showQuickPick([
+                            { label: "FreeLLMAPI", id: PROVIDERS.FREELLMAPI },
                             { label: "Google Gemini", id: PROVIDERS.GEMINI },
                             { label: "Groq", id: PROVIDERS.GROQ },
                             { label: "OpenRouter", id: PROVIDERS.OPENROUTER },

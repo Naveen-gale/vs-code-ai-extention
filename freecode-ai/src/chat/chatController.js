@@ -203,10 +203,14 @@ class ChatController {
 
     // Determine endpoint for Ollama or Cloudflare
     let endpoint = this.ollamaEndpoint;
+    let effectiveModel = this.activeModel;
     if (this.providerManager) {
       const cfg = await this.providerManager.getProviderConfiguration(this.activeProvider);
       if (cfg && cfg.endpoint) {
         endpoint = cfg.endpoint;
+      }
+      if (this.activeProvider === PROVIDERS.FREELLMAPI && cfg.selectionMode !== 'manual') {
+        effectiveModel = 'auto';
       }
     }
 
@@ -227,7 +231,7 @@ class ChatController {
     // 5. Create Provider Instance
     const providerInstance = ProviderFactory.create(this.activeProvider, {
       apiKey,
-      model: this.activeModel,
+      model: effectiveModel,
       endpoint
     });
 
@@ -248,7 +252,7 @@ class ChatController {
     try {
       const response = await providerInstance.complete(preparedMessages, {
         systemPrompt,
-        model: this.activeModel,
+        model: effectiveModel,
         maxTokens: 2048
       });
 
@@ -318,6 +322,86 @@ class ChatController {
       const wrappedError = new Error(friendlyError);
       wrappedError.classification = classification;
       wrappedError.errorMessageObject = errorMsg;
+      throw wrappedError;
+    }
+  }
+
+  async sendMessageStream(userText, onChunk, options = {}) {
+    const trimmed = (userText || '').trim();
+    if (!trimmed) throw new Error('Message cannot be empty.');
+    if (!this.activeProvider) throw new Error('No AI provider configured.');
+
+    const meta = PROVIDER_METADATA[this.activeProvider] || {};
+    let apiKey = null;
+    if (meta.requiresApiKey) {
+      if (!this.secretManager) throw new Error('SecretManager is not available.');
+      apiKey = await this.secretManager.getApiKey(this.activeProvider);
+      if (!apiKey) throw new Error(`API key for ${meta.name || this.activeProvider} is not configured.`);
+    }
+
+    const userMsg = this.messageManager.addMessage({
+      role: 'user',
+      content: trimmed,
+      provider: this.activeProvider,
+      model: this.activeModel
+    });
+    const rawHistory = this.messageManager.getMessages();
+    const preparedMessages = PromptBuilder.prepareMessages(rawHistory);
+    const systemPrompt = PromptBuilder.getSystemPrompt();
+
+    let endpoint = this.ollamaEndpoint;
+    let effectiveModel = this.activeModel;
+    if (this.providerManager) {
+      const cfg = await this.providerManager.getProviderConfiguration(this.activeProvider);
+      if (cfg && cfg.endpoint) endpoint = cfg.endpoint;
+      if (this.activeProvider === PROVIDERS.FREELLMAPI && cfg.selectionMode !== 'manual') {
+        effectiveModel = 'auto';
+      }
+    }
+    const providerInstance = ProviderFactory.create(this.activeProvider, {
+      apiKey,
+      model: effectiveModel,
+      endpoint
+    });
+    if (typeof providerInstance.completeStream !== 'function') {
+      return await this.sendMessage(trimmed);
+    }
+
+    if (this.usageTracker) {
+      await this.usageTracker.recordRequestStart(this.activeProvider, this.activeModel, {
+        estimatedTokens: PromptBuilder.estimateTokenCount(trimmed)
+      });
+    }
+
+    try {
+      const response = await providerInstance.completeStream(preparedMessages, {
+        systemPrompt,
+        model: effectiveModel,
+        maxTokens: 2048,
+        signal: options.signal
+      }, onChunk);
+      if (!response || typeof response.text !== 'string') {
+        throw new Error(`Provider "${this.activeProvider}" returned an empty streaming response.`);
+      }
+      if (this.usageTracker) {
+        await this.usageTracker.recordSuccess(this.activeProvider, this.activeModel, response.usage);
+      }
+      if (this.providerManager) this.providerManager.setConnectionState(this.activeProvider, 'connected');
+      const assistantMsg = this.messageManager.addMessage({
+        role: 'assistant',
+        content: response.text,
+        provider: this.activeProvider,
+        model: this.activeModel,
+        usage: response.usage
+      });
+      return { userMessage: userMsg, assistantMessage: assistantMsg };
+    } catch (err) {
+      let classification = { category: 'UNKNOWN', retryAfterSeconds: 0 };
+      if (this.usageTracker) {
+        classification = await this.usageTracker.recordFailure(this.activeProvider, this.activeModel, err);
+      }
+      const wrappedError = new Error(err.message);
+      wrappedError.classification = classification;
       throw wrappedError;
     }
   }

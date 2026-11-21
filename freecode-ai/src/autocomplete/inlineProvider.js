@@ -18,6 +18,8 @@ const { SuggestionParser } = require('./suggestionParser');
 const { SuggestionCache } = require('./cacheManager');
 const { ProviderFactory } = require('../providers/providerFactory');
 const { PROVIDERS } = require('../config/providers');
+const { InlineQualityPipeline } = require('./qualityPipeline');
+const { LocalPredictionEngine } = require('./localPredictionEngine');
 
 class LavenInlineCompletionProvider {
   /**
@@ -33,6 +35,8 @@ class LavenInlineCompletionProvider {
 
     // Track last typed timestamp per document for debouncing
     this._lastTypeTimes = new Map();
+    this._latencySamples = [];
+    this._typingIntervals = [];
   }
 
   /**
@@ -63,22 +67,26 @@ class LavenInlineCompletionProvider {
 
     const docKey = document.uri.toString();
     const now = Date.now();
+    const previousType = this._lastTypeTimes.get(docKey) || 0;
+    if (previousType > 0) {
+      this._typingIntervals.push(now - previousType);
+      if (this._typingIntervals.length > 20) this._typingIntervals.shift();
+    }
     this._lastTypeTimes.set(docKey, now);
 
-    // 4. Debounce: wait for user to pause typing before sending network requests (default 350ms)
-    const debounceMs = this.quotaManager.getConfig('debounceMs', 350);
-    if (debounceMs > 0) {
-      await new Promise(resolve => setTimeout(resolve, debounceMs));
+    const qualityContext = InlineQualityPipeline.extractRelevantContext(ctx.prefix, ctx.suffix, lang);
+    Object.assign(qualityContext, {
+      prefix: ctx.prefix,
+      suffix: ctx.suffix,
+      language: lang,
+      linePrefix: ctx.linePrefix,
+      lineSuffix: ctx.lineSuffix
+    });
 
-      // Check if user pressed another key or canceled during debounce
-      if (token.isCancellationRequested) {
-        return [];
-      }
-      const latestType = this._lastTypeTimes.get(docKey) || 0;
-      if (latestType > now) {
-        // User typed again during debounce interval
-        return [];
-      }
+    const localPrediction = LocalPredictionEngine.predict(qualityContext);
+    if (localPrediction) {
+      this.quotaManager.stats.localCompletions++;
+      return [this._buildCompletionItem(localPrediction.text, position, 'local', 'rule', false)];
     }
 
     // 5. Select eligible provider according to Mode and Priority
@@ -108,6 +116,19 @@ class LavenInlineCompletionProvider {
       return [this._buildCompletionItem(cached, position, providerId, model, true)];
     }
 
+    // 4. Debounce only AI requests; local rules and cache hits return immediately
+    const configuredDebounce = this.quotaManager.getConfig('debounceMs', 250);
+    const typingFast = this._typingIntervals.length
+      && this._typingIntervals.reduce((sum, interval) => sum + interval, 0) / this._typingIntervals.length < 180;
+    let debounceMs = typingFast ? Math.min(configuredDebounce, 180) : configuredDebounce;
+    debounceMs = Math.max(80, Math.min(300, debounceMs));
+    if (debounceMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, debounceMs));
+      if (token.isCancellationRequested) return [];
+      const latestType = this._lastTypeTimes.get(docKey) || 0;
+      if (latestType > now) return [];
+    }
+
     // 7. Concurrency Guard: register in-flight request & abort any stale request
     const abortCtrl = this.quotaManager.beginRequest(docKey);
 
@@ -120,6 +141,10 @@ class LavenInlineCompletionProvider {
         apiKey = await this.secretManager.getApiKey(providerId);
         if (!apiKey) {
           return [];
+        }
+        if (providerId === PROVIDERS.FREELLMAPI) {
+          const freeLLMAPIConfig = await this.providerManager.getProviderConfiguration(PROVIDERS.FREELLMAPI);
+          endpoint = freeLLMAPIConfig.endpoint || 'http://127.0.0.1:31415/v1';
         }
       } else {
         const ollamaCfg = await this.providerManager.getProviderConfiguration(PROVIDERS.OLLAMA);
@@ -134,12 +159,7 @@ class LavenInlineCompletionProvider {
       });
 
       // 10. Build bounded prompt
-      const messages = PromptBuilder.buildChatMessages({
-        prefix: ctx.prefix,
-        suffix: ctx.suffix,
-        language: lang,
-        linePrefix: ctx.linePrefix
-      });
+      const messages = PromptBuilder.buildQualityChatMessages(qualityContext);
 
       const maxOutputTokens = this.quotaManager.getConfig('maxOutputTokens', 96);
       const systemPrompt = messages[0]?.role === 'system' ? messages[0].content : '';
@@ -147,12 +167,32 @@ class LavenInlineCompletionProvider {
       // 11. Execute request
       let response = null;
       try {
-        response = await provider.complete(messages, {
-          systemPrompt,
-          maxTokens: maxOutputTokens,
-          temperature: 0.1,
-          timeoutMs: selection.isLocal ? 3000 : 8000
+        const requestStart = Date.now();
+        if (providerId === PROVIDERS.FREELLMAPI) {
+          response = await provider.completeInline(ctx.prefix, ctx.suffix, {
+            model,
+            maxTokens: Math.min(maxOutputTokens, 64),
+            temperature: 0.1,
+            timeoutMs: 4500,
+            signal: abortCtrl.signal,
+            inlinePrompt: `${messages[0].content}\n\n${messages[1].content}`
+          });
+        } else {
+          response = await provider.complete(messages, {
+            systemPrompt,
+            maxTokens: maxOutputTokens,
+            temperature: 0.1,
+            timeoutMs: selection.isLocal ? 3000 : 8000,
+            signal: abortCtrl.signal
+          });
+        }
+        this._latencySamples.push({
+          providerId,
+          model,
+          milliseconds: Date.now() - requestStart,
+          timestamp: Date.now()
         });
+        if (this._latencySamples.length > 100) this._latencySamples.shift();
       } catch (err) {
         // If aborted by user typing or cancellation, exit cleanly without recording failure
         if (token.isCancellationRequested || abortCtrl.signal.aborted || err?.name === 'AbortError' || (err?.message && err.message.toLowerCase().includes('aborted'))) {
@@ -186,7 +226,12 @@ class LavenInlineCompletionProvider {
       // 12. Parse & sanitize suggestion
       const cleanSuggestion = SuggestionParser.parse(rawText, {
         linePrefix: ctx.linePrefix,
-        lineSuffix: ctx.lineSuffix
+        lineSuffix: ctx.lineSuffix,
+        language: lang,
+        prefix: ctx.prefix,
+        suffix: ctx.suffix,
+        lineEnding: qualityContext.lineEnding,
+        lineIndent: qualityContext.lineIndent
       });
 
       if (!cleanSuggestion || cleanSuggestion.trim().length === 0) {
@@ -229,32 +274,54 @@ class LavenInlineCompletionProvider {
       if (cd && cd.active) continue;
 
       try {
+        let endpoint = null;
+        if (candidate.id === PROVIDERS.FREELLMAPI) {
+          const cfg = await this.providerManager.getProviderConfiguration(PROVIDERS.FREELLMAPI);
+          endpoint = cfg.endpoint || 'http://127.0.0.1:31415/v1';
+        }
         const provider = ProviderFactory.create(candidate.id, {
           apiKey,
-          model: candidate.model
+          model: candidate.model,
+          endpoint
         });
 
-        const messages = PromptBuilder.buildChatMessages({
+        const qualityContext = InlineQualityPipeline.extractRelevantContext(ctx.prefix, ctx.suffix, document.languageId);
+        Object.assign(qualityContext, {
           prefix: ctx.prefix,
           suffix: ctx.suffix,
           language: document.languageId,
-          linePrefix: ctx.linePrefix
+          linePrefix: ctx.linePrefix,
+          lineSuffix: ctx.lineSuffix
         });
+        const messages = PromptBuilder.buildQualityChatMessages(qualityContext);
 
         const maxOutputTokens = this.quotaManager.getConfig('maxOutputTokens', 96);
         const systemPrompt = messages[0]?.role === 'system' ? messages[0].content : '';
-        const response = await provider.complete(messages, {
-          systemPrompt,
-          maxTokens: maxOutputTokens,
-          temperature: 0.1,
-          timeoutMs: 8000
-        });
+        const response = candidate.id === PROVIDERS.FREELLMAPI
+          ? await provider.completeInline(ctx.prefix, ctx.suffix, {
+            model: candidate.model,
+            maxTokens: Math.min(maxOutputTokens, 64),
+            temperature: 0.1,
+            timeoutMs: 4500,
+            inlinePrompt: `${messages[0].content}\n\n${messages[1].content}`
+          })
+          : await provider.complete(messages, {
+            systemPrompt,
+            maxTokens: maxOutputTokens,
+            temperature: 0.1,
+            timeoutMs: 8000
+          });
 
         if (token.isCancellationRequested) return [];
 
         const clean = SuggestionParser.parse(response ? response.text : '', {
           linePrefix: ctx.linePrefix,
-          lineSuffix: ctx.lineSuffix
+          lineSuffix: ctx.lineSuffix,
+          language: document.languageId,
+          prefix: ctx.prefix,
+          suffix: ctx.suffix,
+          lineEnding: qualityContext.lineEnding,
+          lineIndent: qualityContext.lineIndent
         });
 
         if (clean && clean.trim().length > 0) {
@@ -283,6 +350,19 @@ class LavenInlineCompletionProvider {
   /**
    * Formats string into a VS Code InlineCompletionItem with acceptance tracking command.
    */
+  getLatencyStats() {
+    if (!this._latencySamples.length) {
+      return { count: 0, averageMs: 0, fastestMs: 0, slowestMs: 0 };
+    }
+    const values = this._latencySamples.map(sample => sample.milliseconds);
+    return {
+      count: values.length,
+      averageMs: Math.round(values.reduce((sum, value) => sum + value, 0) / values.length),
+      fastestMs: Math.min(...values),
+      slowestMs: Math.max(...values)
+    };
+  }
+
   _buildCompletionItem(insertText, position, providerId, model, isCached = false) {
     const item = new vscode.InlineCompletionItem(
       insertText,

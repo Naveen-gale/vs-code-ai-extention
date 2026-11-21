@@ -18,6 +18,8 @@ const { PromptBuilder } = require('../src/autocomplete/promptBuilder');
 const { ContextCollector } = require('../src/autocomplete/contextCollector');
 const { SuggestionParser } = require('../src/autocomplete/suggestionParser');
 const { SuggestionCache } = require('../src/autocomplete/cacheManager');
+const { InlineQualityPipeline } = require('../src/autocomplete/qualityPipeline');
+const { LocalPredictionEngine } = require('../src/autocomplete/localPredictionEngine');
 
 async function run() {
   console.log('Running Autocomplete Unit Tests...');
@@ -86,6 +88,124 @@ async function run() {
   assert.strictEqual(ContextCollector.SUPPORTED_LANGUAGES.has('plaintext'), true);
   assert.strictEqual(ContextCollector.SUPPORTED_LANGUAGES.has('yaml'), true);
   assert.strictEqual(ContextCollector.SUPPORTED_LANGUAGES.has('vue'), true);
+
+  // 8. Quality pipeline extracts Python symbols and produces a cursor-focused prompt
+  const pythonSource =
+    'def add(a, b):\n    return a + b\n\n' +
+    'def subtract(a, b):\n    return a - b\n\n' +
+    'a = input("enter the number ")\n\n' +
+    'b = input("Enter the second number ")\n\n' +
+    'print';
+  const pythonContext = InlineQualityPipeline.extractRelevantContext(pythonSource, '', 'python');
+  Object.assign(pythonContext, {
+    prefix: pythonSource,
+    suffix: '',
+    language: 'python',
+    linePrefix: 'print',
+    lineSuffix: ''
+  });
+  const qualityPrompt = InlineQualityPipeline.buildPrompt(pythonContext);
+  assert.ok(qualityPrompt[1].content.includes('add'));
+  assert.ok(qualityPrompt[1].content.includes('subtract'));
+  assert.ok(qualityPrompt[1].content.includes('<CURSOR>' ) || qualityPrompt[1].content.includes('INSERTION'));
+
+  // 9. Exact Python regression: cursor immediately after print
+  const rawPython =
+    'print("Sum:", add(int(a), int(b)))\n' +
+    'print("Difference:", subtract(int(a), int(b)))';
+  const pythonInsertion = InlineQualityPipeline.postProcess(rawPython, pythonContext);
+  assert.strictEqual(
+    pythonInsertion,
+    '(\"Sum:\", add(int(a), int(b)))\nprint(\"Difference:\", subtract(int(a), int(b)))'
+  );
+
+  const completedPython =
+    pythonSource.replace(/print$/, '') +
+    'print' +
+    pythonInsertion;
+  assert.ok(completedPython.includes('print("Sum:", add(int(a), int(b)))'));
+  assert.ok(completedPython.includes('print("Difference:", subtract(int(a), int(b)))'));
+
+  // 10. Markdown, duplicate suffix, and malformed bracket responses are rejected or cleaned
+  const fenced = InlineQualityPipeline.postProcess(
+    '```javascript\nadd(1, 2);\n```',
+    { language: 'javascript', prefix: 'const result = ', suffix: '', linePrefix: 'const result = ', lineSuffix: '' }
+  );
+  assert.strictEqual(fenced, 'add(1, 2);');
+
+  const malformed = InlineQualityPipeline.postProcess(
+    'const broken = [1, 2;',
+    { language: 'javascript', prefix: '', suffix: '', linePrefix: '', lineSuffix: '' }
+  );
+  assert.strictEqual(malformed, '');
+
+  const duplicatedSuffix = InlineQualityPipeline.postProcess(
+    'return value;\n}',
+    { language: 'javascript', prefix: 'function test() {\n', suffix: '}', linePrefix: '  return', lineSuffix: '' }
+  );
+  assert.ok(!duplicatedSuffix.endsWith('}\n'));
+
+  // 11. Inline parser rejects prose and still accepts real code
+  assert.strictEqual(
+    InlineQualityPipeline.postProcess(
+      'Here is the code:\n  return x * 2;',
+      { language: 'javascript', prefix: 'function test() {\n', suffix: '', linePrefix: '  ', lineSuffix: '' }
+    ),
+    ''
+  );
+  assert.strictEqual(
+    InlineQualityPipeline.postProcess(
+      'This code calculates the sum.',
+      { language: 'javascript', prefix: 'const total = ', suffix: '', linePrefix: 'const total = ', lineSuffix: '' }
+    ),
+    ''
+  );
+
+  // 11. Local prediction completes the exact Python print cursor without repeating print
+  const exactPythonPrefix =
+    'def add(a, b):\n    return a + b\n\n' +
+    'def subtract(a, b):\n    return a - b\n\n' +
+    'a = int(input("Enter first number: "))\n' +
+    'b = int(input("Enter second number: "))\n\nprint';
+  const local = LocalPredictionEngine.predict({
+    language: 'python',
+    prefix: exactPythonPrefix,
+    linePrefix: 'print',
+    lineSuffix: '',
+    lineEnding: '\n'
+  });
+  assert.strictEqual(local.source, 'local-pattern');
+  assert.strictEqual(
+    local.text,
+    '("Sum:", add(a, b))\nprint("Difference:", subtract(a, b))'
+  );
+  assert.strictEqual(
+    exactPythonPrefix.slice(0, -5) + 'print' + local.text,
+    'def add(a, b):\n    return a + b\n\n' +
+    'def subtract(a, b):\n    return a - b\n\n' +
+    'a = int(input("Enter first number: "))\n' +
+    'b = int(input("Enter second number: "))\n\n' +
+    'print("Sum:", add(a, b))\nprint("Difference:", subtract(a, b))'
+  );
+
+  // 12. Safe local bracket completion and no-suffix guard
+  const bracket = LocalPredictionEngine.predict({
+    language: 'javascript',
+    prefix: 'const value = multiply(first, second)',
+    linePrefix: 'const value = multiply(first, second)',
+    lineSuffix: '',
+    lineEnding: '\n'
+  });
+  assert.strictEqual(bracket, null);
+
+  const openBracket = LocalPredictionEngine.predict({
+    language: 'javascript',
+    prefix: 'const value = multiply(first, second',
+    linePrefix: 'const value = multiply(first, second',
+    lineSuffix: '',
+    lineEnding: '\n'
+  });
+  assert.strictEqual(openBracket.text, ')');
 
   console.log('All Autocomplete Unit Tests Passed!\n');
 }

@@ -114,6 +114,7 @@
           <div id="modal-group-provider-select" class="form-group">
             <label for="modal-provider-dropdown">Provider</label>
             <select id="modal-provider-dropdown">
+              <option value="freellmapi">FreeLLMAPI (Local Router)</option>
               <option value="gemini">Google Gemini (Free Tier)</option>
               <option value="groq">Groq (LPU Inference)</option>
               <option value="openrouter">OpenRouter (Multi-Model)</option>
@@ -161,6 +162,15 @@
             </div>
             <select id="modal-model-select"></select>
             <div id="modal-model-desc" class="form-hint"></div>
+          </div>
+
+          <div class="form-group">
+            <label for="modal-selection-mode">Model Selection</label>
+            <select id="modal-selection-mode">
+              <option value="manual">Manual model</option>
+              <option value="auto">Automatic routing</option>
+            </select>
+            <div class="form-hint">Automatic routing uses FreeLLMAPI task strategies and preserves manual selection for pinned models.</div>
           </div>
 
           <!-- Failover Priority Order -->
@@ -221,6 +231,7 @@
       <!-- Backward-compatible elements for tests & legacy fallbacks -->
       <div style="display: none;">
         <select id="provider-select">
+          <option value="freellmapi">FreeLLMAPI</option>
           <option value="gemini">Google Gemini</option>
           <option value="groq">Groq</option>
           <option value="openrouter">OpenRouter</option>
@@ -259,6 +270,7 @@
         <label for="dashboard-provider-select">View Usage For Provider</label>
         <select id="dashboard-provider-select">
           <option value="current">Current Active Provider</option>
+          <option value="freellmapi">FreeLLMAPI</option>
           <option value="gemini">Google Gemini</option>
           <option value="groq">Groq</option>
           <option value="openrouter">OpenRouter</option>

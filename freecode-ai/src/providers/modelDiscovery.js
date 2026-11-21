@@ -22,6 +22,9 @@ class ModelDiscovery {
 
     try {
       switch (providerId) {
+        case PROVIDERS.FREELLMAPI:
+          return await ModelDiscovery._fetchFreeLLMAPIModels(options.apiKey, options.endpoint, fallback);
+
         case PROVIDERS.GEMINI:
           return await ModelDiscovery._fetchGeminiModels(options.apiKey, fallback);
 
@@ -62,6 +65,28 @@ class ModelDiscovery {
       console.warn(`FreeCode AI: Failed to fetch live models for ${providerId}, using default registry:`, err.message);
       return fallback;
     }
+  }
+
+  static async _fetchFreeLLMAPIModels(apiKey, endpoint, fallback) {
+    if (!apiKey) return [];
+    const cleanEndpoint = (endpoint || 'http://127.0.0.1:31415/v1').replace(/\/+$/, '');
+    const data = await httpClient.request(`${cleanEndpoint}/models`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${apiKey}` }
+    }, 15000);
+
+    if (!data || !Array.isArray(data.data)) return [];
+    return data.data
+      .filter(m => m && typeof m.id === 'string' && m.id.trim())
+      .map(m => ({
+        id: m.id,
+        name: m.id,
+        description: m.owned_by ? `FreeLLMAPI model (${m.owned_by})` : 'FreeLLMAPI model',
+        contextWindow: m.context_window || m.contextLength || m.context_length || undefined,
+        isFree: true,
+        isDefault: false,
+        executionStatus: m.execution_status || m.executionStatus || undefined
+      }));
   }
 
   static async _fetchGeminiModels(apiKey, fallback) {

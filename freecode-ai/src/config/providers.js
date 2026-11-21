@@ -3,6 +3,7 @@
  */
 
 const PROVIDERS = {
+  FREELLMAPI: 'freellmapi',
   GEMINI: 'gemini',
   GROQ: 'groq',
   OPENROUTER: 'openrouter',
@@ -17,6 +18,19 @@ const PROVIDERS = {
 };
 
 const PROVIDER_METADATA = {
+  [PROVIDERS.FREELLMAPI]: {
+    id: PROVIDERS.FREELLMAPI,
+    name: 'FreeLLMAPI',
+    description: 'Local OpenAI-compatible router for upstream AI providers.',
+    requiresApiKey: true,
+    apiKeyUrl: 'https://github.com/tashfeenahmed/freellmapi',
+    defaultModel: null,
+    defaultEndpoint: 'http://127.0.0.1:31415/v1',
+    baseUrl: 'http://127.0.0.1:31415/v1',
+    freeApi: true,
+    apiSupported: true,
+    quotaType: 'local_router'
+  },
   [PROVIDERS.GEMINI]: {
     id: PROVIDERS.GEMINI,
     name: 'Google Gemini',

@@ -5,6 +5,7 @@
 const { PROVIDERS } = require('./providers');
 
 const MODEL_REGISTRY = {
+  [PROVIDERS.FREELLMAPI]: [],
   [PROVIDERS.GEMINI]: [
     {
       id: 'gemini-1.5-flash',

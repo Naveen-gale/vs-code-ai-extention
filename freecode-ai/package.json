@@ -129,17 +129,17 @@
         },
         "laven.inline.debounceMs": {
           "type": "number",
-          "default": 350,
+          "default": 250,
           "description": "Milliseconds of typing pause required before an inline completion request is dispatched."
         },
         "laven.inline.maxInputTokens": {
           "type": "number",
-          "default": 1500,
+          "default": 800,
           "description": "Maximum bounded input tokens (prefix + suffix) to prevent excessive quota consumption."
         },
         "laven.inline.maxOutputTokens": {
           "type": "number",
-          "default": 96,
+          "default": 48,
           "description": "Maximum generated output tokens for inline completions."
         },
         "laven.inline.cacheEnabled": {
@@ -181,6 +181,6 @@
     }
   },
   "scripts": {
-    "test": "node ./test/day1.test.js && node ./test/upgrade.test.js && node ./test/multiProvider.test.js && node ./test/day2Ui.test.js && node ./test/newProviders.test.js && node ./test/autocomplete.test.js && node ./test/quotaAndInline.test.js"
+    "test": "node ./test/day1.test.js && node ./test/upgrade.test.js && node ./test/multiProvider.test.js && node ./test/day2Ui.test.js && node ./test/newProviders.test.js && node ./test/autocomplete.test.js && node ./test/quotaAndInline.test.js && node ./test/freeLLMAPI.test.js && node ./test/chatUiOutput.test.js"
   }
 }

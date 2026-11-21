@@ -16,6 +16,12 @@ class SuggestionParser {
    */
   static parse(rawText, context = {}) {
     if (!rawText || typeof rawText !== 'string') return '';
+    try {
+      const { InlineQualityPipeline } = require('./qualityPipeline');
+      if (context.language) {
+        return InlineQualityPipeline.postProcess(rawText, context);
+      }
+    } catch (_) {}
 
     let text = rawText;
 

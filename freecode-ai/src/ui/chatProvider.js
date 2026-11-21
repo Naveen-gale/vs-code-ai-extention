@@ -116,7 +116,8 @@ class ChatProvider {
           activate: message.activate,
           model: message.model,
           priority: message.priority,
-          endpoint: message.endpoint
+          endpoint: message.endpoint,
+          selectionMode: message.selectionMode
         });
         break;
 
@@ -143,6 +144,7 @@ class ChatProvider {
         const key = message.apiKey;
         const endpoint = message.endpoint;
         const priority = message.priority;
+        const selectionMode = message.selectionMode;
 
         if (prov === PROVIDERS.OLLAMA) {
           if (endpoint) {
@@ -155,13 +157,15 @@ class ChatProvider {
           await this.handleSaveApiKey(prov, key, {
             activate: false,
             priority,
-            endpoint
+            endpoint,
+            selectionMode
           });
-        } else if (endpoint && (prov === PROVIDERS.CLOUDFLARE || prov === PROVIDERS.NVIDIA)) {
+        } else if (endpoint && (prov === PROVIDERS.CLOUDFLARE || prov === PROVIDERS.NVIDIA || prov === PROVIDERS.FREELLMAPI)) {
           if (this.providerManager) {
             await this.providerManager.setProviderConfiguration(prov, {
               endpoint,
-              priority: priority !== undefined ? Number(priority) : undefined
+              priority: priority !== undefined ? Number(priority) : undefined,
+              selectionMode
             });
           }
         }
@@ -193,7 +197,8 @@ class ChatProvider {
         await this.handleSelectModel(message.provider, message.model, {
           activate: message.activate,
           priority: message.priority,
-          endpoint: message.endpoint
+          endpoint: message.endpoint,
+          selectionMode: message.selectionMode
         });
         break;
 
@@ -238,6 +243,27 @@ class ChatProvider {
         });
         vscode.window.showInformationMessage('Laven: Rate limit cooldowns have been reset.');
         break;
+
+      // Code Insertion and Clipboard Support
+      case 'insertCode': {
+        const editor = vscode.window.activeTextEditor;
+        if (editor && message.text) {
+          await editor.edit(editBuilder => {
+            editBuilder.insert(editor.selection.active, message.text);
+          });
+          vscode.window.showInformationMessage('Laven: Code inserted at cursor.');
+        } else {
+          vscode.window.showWarningMessage('Laven: Open an active editor tab to insert code.');
+        }
+        break;
+      }
+
+      case 'copyCode': {
+        if (message.text && vscode.env && vscode.env.clipboard) {
+          await vscode.env.clipboard.writeText(message.text);
+        }
+        break;
+      }
 
       // Compatibility with Day 1 legacy triggers
       case 'selectProvider':
@@ -347,7 +373,15 @@ class ChatProvider {
       }
 
       // 3. Delegate to ChatController
-      const result = await this.chatController.sendMessage(text);
+      const streamingProvider = this.chatController.activeProvider === PROVIDERS.FREELLMAPI;
+      const result = streamingProvider
+        ? await this.chatController.sendMessageStream(text, (chunk, fullText) => {
+          this.postMessage({
+            type: 'messageDelta',
+            message: { role: 'assistant', content: fullText }
+          });
+        })
+        : await this.chatController.sendMessage(text);
 
       // 4. Return assistant response
       this.postMessage({
@@ -371,10 +405,24 @@ class ChatProvider {
       this.postMessage({ type: 'status', status: 'ready' });
 
       // Determine next fallback provider according to user priority (prevent infinite loop)
-      if (this.providerManager && activeProv && retryDepth < 1) {
+      const noFallbackCategory = err?.classification?.category === 'INVALID_API_KEY' ||
+        err?.classification?.category === 'PERMISSION_DENIED' ||
+        err?.classification?.category === 'MODEL_NOT_FOUND';
+      if (this.providerManager && activeProv && retryDepth < 1 && !noFallbackCategory) {
         const fallback = await this.providerManager.getNextFallbackProvider(activeProv, this.usageTracker);
         if (fallback) {
           const isRateLimit = (err?.category === 'RATE_LIMIT') || (err?.message && err.message.toLowerCase().includes('rate limit'));
+          const category = err?.classification?.category || err?.category;
+          const recoverable = ['RATE_LIMIT', 'QUOTA_EXHAUSTED', 'SERVER_ERROR', 'NETWORK_ERROR', 'TIMEOUT'].includes(category);
+          if (recoverable) {
+            this.postMessage({
+              type: 'status',
+              status: 'thinking',
+              message: `Falling back from ${failedMeta.name} to ${fallback.name}...`
+            });
+            await this.executeFailoverSwitch(fallback.id, text, { retryDepth: retryDepth + 1 });
+            return;
+          }
           // 1. Post interactive fallback suggestion to Webview
           this.postMessage({
             type: 'fallbackSuggestion',
@@ -440,6 +488,12 @@ class ChatProvider {
       }
       if (options.endpoint !== undefined) {
         updateData.endpoint = options.endpoint;
+      }
+      if (options.selectionMode !== undefined) {
+        updateData.selectionMode = options.selectionMode;
+      }
+      if (options.selectionMode !== undefined) {
+        updateData.selectionMode = options.selectionMode;
       }
       await this.providerManager.setProviderConfiguration(providerId, updateData);
     }
@@ -763,7 +817,7 @@ class ChatProvider {
     });
   }
 
-  sendDashboardData(providerFilter) {
+  async sendDashboardData(providerFilter) {
     if (!this.usageTracker || !this.chatController) return;
 
     const p = (!providerFilter || providerFilter === 'current')
@@ -771,6 +825,20 @@ class ChatProvider {
       : providerFilter;
 
     const data = this.usageTracker.getDashboardData(p, this.chatController.activeModel);
+    if (p === PROVIDERS.FREELLMAPI) {
+      try {
+        const key = await this.secretManager.getApiKey(PROVIDERS.FREELLMAPI);
+        const cfg = await this.providerManager.getProviderConfiguration(PROVIDERS.FREELLMAPI);
+        const provider = require('../providers/providerFactory').ProviderFactory.create(PROVIDERS.FREELLMAPI, {
+          apiKey: key,
+          endpoint: cfg.endpoint
+        });
+        data.providerUsage = await provider.getUsage();
+      } catch (_) {
+        data.providerUsage = null;
+        data.providerUsageMessage = 'Usage unavailable from provider API.';
+      }
+    }
     if (this.quotaManager) {
       data.quota = this.quotaManager.getDashboardData();
     }

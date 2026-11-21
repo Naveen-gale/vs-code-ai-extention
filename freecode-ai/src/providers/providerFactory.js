@@ -14,6 +14,7 @@ const { NvidiaProvider } = require('./nvidiaProvider');
 const { DeepSeekProvider } = require('./deepseekProvider');
 const { HuggingFaceProvider } = require('./huggingfaceProvider');
 const { OpenAIProvider } = require('./openaiProvider');
+const { FreeLLMAPIProvider } = require('./freeLLMAPIProvider');
 
 class ProviderFactory {
   /**
@@ -29,6 +30,9 @@ class ProviderFactory {
     const normalized = (providerId || '').toLowerCase();
 
     switch (normalized) {
+      case PROVIDERS.FREELLMAPI:
+        return new FreeLLMAPIProvider(options);
+
       case PROVIDERS.GEMINI:
       case 'google gemini':
         return new GeminiProvider(options);

@@ -52,6 +52,7 @@
   const modalBtnApplyModel = document.getElementById('modal-btn-apply-model');
   const modalBtnRemove = document.getElementById('modal-btn-remove');
   const modalBtnUseNow = document.getElementById('modal-btn-use-now');
+  const modalSelectionMode = document.getElementById('modal-selection-mode');
 
   // DOM Elements - Delete Confirmation Modal
   const confirmModal = document.getElementById('confirm-modal');
@@ -116,6 +117,7 @@
   }
 
   const providerLinks = {
+    freellmapi: 'https://github.com/tashfeenahmed/freellmapi',
     gemini: 'https://aistudio.google.com/app/apikey',
     groq: 'https://console.groq.com/keys',
     openrouter: 'https://openrouter.ai/keys',
@@ -155,7 +157,278 @@
     activeModelPill.addEventListener('click', () => switchTab('settings'));
   }
 
-  // 2. Chat Logic
+  // 2. Chat Logic & Markdown / Code Rendering System
+  function escapeHtml(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function copyToClipboard(text) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard.writeText(text).catch(() => {});
+    }
+    if (vscode) {
+      vscode.postMessage({ command: 'copyCode', text: text });
+    }
+  }
+
+  // Tokenize & colorize code syntax without HTML collision
+  function highlightSyntax(code, lang) {
+    const l = (lang || '').toLowerCase();
+    const isPy = ['python', 'py'].includes(l);
+
+    const rules = [
+      { type: 'comment', rx: isPy ? /#(?:[^\r\n]*)/y : /(?:\/\/.*|\/\*[\s\S]*?\*\/)/y },
+      { type: 'string', rx: isPy ? /(?:"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\r\n])*"|'(?:\\.|[^'\r\n])*')/y : /(?:"(?:\\.|[^"\r\n])*"|'(?:\\.|[^'\r\n])*'|`[\s\S]*?`)/y },
+      { type: 'kw', rx: /\b(def|class|return|if|else|elif|for|while|import|from|as|try|except|finally|raise|async|await|function|const|let|var|export|default|new|typeof|instanceof|void|delete|in|of|with|yield|pass|break|continue|lambda|switch|case|catch|throw)\b/y },
+      { type: 'builtin', rx: /\b(True|False|None|true|false|null|undefined|self|this|int|str|bool|float|list|dict|set|tuple|print|range|len|console|window|document|Math|JSON)\b/y },
+      { type: 'decorator', rx: /@[a-zA-Z_]\w*/y },
+      { type: 'fn', rx: /[a-zA-Z_]\w*(?=\s*\()/y },
+      { type: 'num', rx: /\b\d+(?:\.\d+)?\b/y },
+      { type: 'op', rx: /(?:===|!==|==|!=|<=|>=|->|=>|\+=|-=|\*=|\/=|&&|\|\||[-+*\/%<>=!])/y },
+      { type: 'ident', rx: /[a-zA-Z_]\w*/y },
+      { type: 'space', rx: /\s+/y },
+      { type: 'punct', rx: /./y }
+    ];
+
+    let i = 0;
+    let out = '';
+    while (i < code.length) {
+      let matched = false;
+      for (const r of rules) {
+        r.rx.lastIndex = i;
+        const m = r.rx.exec(code);
+        if (m && m.index === i) {
+          matched = true;
+          const text = m[0];
+          i += text.length;
+          const esc = escapeHtml(text);
+          if (r.type === 'space' || r.type === 'ident' || r.type === 'punct') {
+            out += esc;
+          } else {
+            out += `<span class="tok-${r.type}">${esc}</span>`;
+          }
+          break;
+        }
+      }
+      if (!matched) {
+        out += escapeHtml(code[i]);
+        i++;
+      }
+    }
+    return out;
+  }
+
+  function formatInline(text) {
+    let s = escapeHtml(text);
+    s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong class="md-bold">$1</strong>');
+    s = s.replace(/(^|[^\*])\*([^\*]+?)\*([^\*]|$)/g, '$1<em class="md-italic">$2</em>$3');
+    s = s.replace(/`([^`]+?)`/g, '<code class="md-inline-code">$1</code>');
+    return s;
+  }
+
+  function parseMarkdown(text) {
+    if (!text) return { html: '', codeBlocks: [] };
+
+    const codeBlocks = [];
+    // 1. Extract closed fenced code blocks
+    let src = text.replace(/```([a-zA-Z0-9_-]*)\r?\n([\s\S]*?)```/g, (match, lang, code) => {
+      const trimmedCode = code.replace(/\r?\n$/, '');
+      const cleanLang = (lang || 'code').trim();
+      const highlighted = highlightSyntax(trimmedCode, cleanLang);
+      const placeholder = `___FREECODE_BLOCK_${codeBlocks.length}___`;
+      codeBlocks.push({
+        raw: trimmedCode,
+        lang: cleanLang,
+        html: `
+<div class="code-block-container" data-lang="${cleanLang}">
+  <textarea class="raw-code" style="display:none;">${escapeHtml(trimmedCode)}</textarea>
+  <div class="code-block-header">
+    <div class="code-lang-label">
+      <svg class="code-lang-icon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
+        <path d="M4.7 11.3L1.4 8l3.3-3.3L4 4l-4 4 4 4 .7-.7zm6.6 0l3.3-3.3L11.3 4.7 12 4l4 4-4 4-.7-.7z"/>
+      </svg>
+      <span class="code-lang-tag">${cleanLang.toUpperCase()}</span>
+    </div>
+    <div class="code-block-actions">
+      <button class="code-btn btn-copy-code" title="Copy code">
+        <svg class="btn-icon" viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+          <path d="M4 4v9a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V4H4zm1-1h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+          <path d="M2 1h7a1 1 0 0 1 1 1v1H9V2H2v8h1v1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z"/>
+        </svg>
+        <span class="btn-text">Copy</span>
+      </button>
+      <button class="code-btn btn-insert-code" title="Insert at cursor in active editor">
+        <svg class="btn-icon" viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+          <path d="M8 1v11.293l3.146-3.147a.5.5 0 0 1 .708.708l-4 4a.5.5 0 0 1-.708 0l-4-4a.5.5 0 1 1 .708-.708L7 12.293V1a.5.5 0 0 1 1 0z"/>
+          <path d="M1 14.5a.5.5 0 0 1 .5-.5h13a.5.5 0 0 1 0 1h-13a.5.5 0 0 1-.5-.5z"/>
+        </svg>
+        <span class="btn-text">Insert</span>
+      </button>
+    </div>
+  </div>
+  <pre class="code-pre"><code class="code-body language-${cleanLang}">${highlighted}</code></pre>
+</div>`
+      });
+      return placeholder;
+    });
+
+    // Handle unclosed code block (e.g. while streaming)
+    src = src.replace(/```([a-zA-Z0-9_-]*)\r?\n([\s\S]*)$/, (match, lang, code) => {
+      const trimmedCode = code;
+      const cleanLang = (lang || 'code').trim();
+      const highlighted = highlightSyntax(trimmedCode, cleanLang);
+      const placeholder = `___FREECODE_BLOCK_${codeBlocks.length}___`;
+      codeBlocks.push({
+        raw: trimmedCode,
+        lang: cleanLang,
+        html: `
+<div class="code-block-container" data-lang="${cleanLang}">
+  <textarea class="raw-code" style="display:none;">${escapeHtml(trimmedCode)}</textarea>
+  <div class="code-block-header">
+    <div class="code-lang-label">
+      <svg class="code-lang-icon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
+        <path d="M4.7 11.3L1.4 8l3.3-3.3L4 4l-4 4 4 4 .7-.7zm6.6 0l3.3-3.3L11.3 4.7 12 4l4 4-4 4-.7-.7z"/>
+      </svg>
+      <span class="code-lang-tag">${cleanLang.toUpperCase()} (generating...)</span>
+    </div>
+    <div class="code-block-actions">
+      <button class="code-btn btn-copy-code" title="Copy code">
+        <svg class="btn-icon" viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+          <path d="M4 4v9a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V4H4zm1-1h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+          <path d="M2 1h7a1 1 0 0 1 1 1v1H9V2H2v8h1v1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z"/>
+        </svg>
+        <span class="btn-text">Copy</span>
+      </button>
+    </div>
+  </div>
+  <pre class="code-pre"><code class="code-body language-${cleanLang}">${highlighted}</code></pre>
+</div>`
+      });
+      return placeholder;
+    });
+
+    // 2. Process markdown line by line
+    const lines = src.split(/\r?\n/);
+    const out = [];
+    let inList = false;
+    let inOrderedList = false;
+    let inCallout = false;
+
+    const closeList = () => {
+      if (inList) { out.push('</ul>'); inList = false; }
+      if (inOrderedList) { out.push('</ol>'); inOrderedList = false; }
+    };
+    const closeCallout = () => {
+      if (inCallout) { out.push('</div></div>'); inCallout = false; }
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Code block placeholder
+      if (line.trim().startsWith('___FREECODE_BLOCK_') && line.trim().endsWith('___')) {
+        closeList();
+        closeCallout();
+        out.push(line.trim());
+        continue;
+      }
+
+      // Callout card: e.g. **Notes**, **Important**, **Warning**, **Tip**
+      if (/^\s*\*\*(Notes?|Important|Warning|Tip)\*\*\s*$/i.test(line)) {
+        closeList();
+        closeCallout();
+        const title = line.replace(/\*\*/g, '').trim();
+        inCallout = true;
+        out.push(`<div class="callout-card ${title.toLowerCase()}"><div class="callout-header"><span class="callout-icon">💡</span> <span class="callout-title">${escapeHtml(title)}</span></div><div class="callout-body">`);
+        continue;
+      }
+
+      // Markdown Headers: ###, ##, #
+      if (/^###\s+(.+)$/.test(line)) {
+        closeList();
+        closeCallout();
+        out.push(`<h5 class="md-h3">${formatInline(line.replace(/^###\s+/, ''))}</h5>`);
+        continue;
+      }
+      if (/^##\s+(.+)$/.test(line)) {
+        closeList();
+        closeCallout();
+        out.push(`<h4 class="md-h2">${formatInline(line.replace(/^##\s+/, ''))}</h4>`);
+        continue;
+      }
+      if (/^#\s+(.+)$/.test(line)) {
+        closeList();
+        closeCallout();
+        out.push(`<h3 class="md-h1">${formatInline(line.replace(/^#\s+/, ''))}</h3>`);
+        continue;
+      }
+
+      // Bold numbered subheadings like: **1. Iterative (recommended for performance)**
+      const numSubHeader = line.match(/^\s*\*\*(\d+\.\s+[^*]+)\*\*\s*$/);
+      if (numSubHeader) {
+        closeList();
+        closeCallout();
+        const numPart = numSubHeader[1].match(/^\d+/)[0];
+        const titlePart = numSubHeader[1].replace(/^\d+\.\s*/, '');
+        out.push(`<div class="md-subheading"><span class="subheading-badge">${escapeHtml(numPart)}</span><span class="subheading-text">${formatInline(titlePart)}</span></div>`);
+        continue;
+      }
+
+      // Blockquote: > ...
+      if (/^>\s*(.*)$/.test(line)) {
+        closeList();
+        const quoteText = line.replace(/^>\s*/, '');
+        out.push(`<blockquote class="md-quote">${formatInline(quoteText)}</blockquote>`);
+        continue;
+      }
+
+      // Unordered lists: - item or * item
+      if (/^\s*[-*]\s+(.+)$/.test(line)) {
+        if (inOrderedList) { out.push('</ol>'); inOrderedList = false; }
+        if (!inList) { out.push('<ul class="md-list">'); inList = true; }
+        const itemText = line.replace(/^\s*[-*]\s+/, '');
+        out.push(`<li>${formatInline(itemText)}</li>`);
+        continue;
+      }
+
+      // Ordered lists: 1. item
+      if (/^\s*(\d+)\.\s+(.+)$/.test(line)) {
+        if (inList) { out.push('</ul>'); inList = false; }
+        if (!inOrderedList) { out.push('<ol class="md-olist">'); inOrderedList = true; }
+        const itemText = line.replace(/^\s*\d+\.\s+/, '');
+        out.push(`<li>${formatInline(itemText)}</li>`);
+        continue;
+      }
+
+      // Empty line
+      if (!line.trim()) {
+        closeList();
+        continue;
+      }
+
+      // Regular paragraph
+      closeList();
+      out.push(`<p class="md-para">${formatInline(line)}</p>`);
+    }
+
+    closeList();
+    closeCallout();
+
+    let rendered = out.join('\n');
+    // Function replacement prevents $1 special replacement pattern collision
+    codeBlocks.forEach((block, idx) => {
+      rendered = rendered.replace(`___FREECODE_BLOCK_${idx}___`, () => block.html);
+    });
+
+    return { html: rendered, codeBlocks };
+  }
+
   function appendMessage(msg) {
     if (emptyState) {
       emptyState.style.display = 'none';
@@ -164,32 +437,146 @@
     const bubble = document.createElement('div');
     bubble.className = `message-bubble ${msg.role} ${msg.error ? 'error' : ''}`;
 
-    const sender = document.createElement('div');
-    sender.className = 'message-sender';
-    sender.textContent = msg.role === 'user' ? 'You' : (msg.role === 'assistant' ? 'Laven' : 'System');
+    if (msg.role === 'assistant') {
+      const isMissing = !msg.content || typeof msg.content !== 'string' || msg.content.trim().length === 0;
+      const contentText = isMissing
+        ? 'No response text received from provider. Please switch models or check your configuration.'
+        : msg.content;
+      if (isMissing) bubble.classList.add('error');
 
-    const body = document.createElement('div');
-    body.className = 'message-text';
-    if (msg.role === 'assistant' && (!msg.content || typeof msg.content !== 'string' || msg.content.trim().length === 0)) {
-      body.textContent = 'No response text received from provider. Please switch models or check your configuration.';
-      bubble.classList.add('error');
+      // Hidden raw text for exact 1-click clipboard copy
+      const rawArea = document.createElement('textarea');
+      rawArea.className = 'raw-message-content';
+      rawArea.style.display = 'none';
+      rawArea.value = contentText;
+      bubble.appendChild(rawArea);
+
+      // Assistant Header Bar
+      const senderBar = document.createElement('div');
+      senderBar.className = 'message-sender-bar';
+      senderBar.innerHTML = `
+        <div class="assistant-identity">
+          <svg class="assistant-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+          <span class="assistant-name">Laven</span>
+        </div>
+        <span class="active-model-tag">${currentActiveModel || 'AI'}</span>
+      `;
+      bubble.appendChild(senderBar);
+
+      // Assistant Content
+      const body = document.createElement('div');
+      body.className = 'message-text assistant-text md-content';
+      if (msg.error || isMissing) {
+        body.innerHTML = `<div class="error-banner">${escapeHtml(contentText)}</div>`;
+      } else {
+        const parsed = parseMarkdown(contentText);
+        body.innerHTML = parsed.html;
+      }
+      bubble.appendChild(body);
+
+      // Assistant Footer Bar (Tokens + Copy Entire Response)
+      const footerBar = document.createElement('div');
+      footerBar.className = 'message-footer';
+      let tokenText = '';
+      if (msg.usage && !msg.error) {
+        const isEst = msg.usage.isEstimated ? 'est.' : 'rep.';
+        tokenText = `⚡ ${msg.usage.totalTokens} tokens (${isEst})`;
+      }
+      footerBar.innerHTML = `
+        <div class="footer-left">
+          ${tokenText ? `<span class="token-pill">${tokenText}</span>` : ''}
+        </div>
+        <button class="btn-copy-response" title="Copy entire response">
+          <svg class="action-icon" viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+            <path d="M4 4v9a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V4H4zm1-1h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+            <path d="M2 1h7a1 1 0 0 1 1 1v1H9V2H2v8h1v1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z"/>
+          </svg>
+          <span class="copy-resp-text">Copy Response</span>
+        </button>
+      `;
+      bubble.appendChild(footerBar);
     } else {
+      // User or System message
+      const sender = document.createElement('div');
+      sender.className = 'message-sender';
+      sender.textContent = msg.role === 'user' ? 'You' : 'System';
+
+      const body = document.createElement('div');
+      body.className = 'message-text user-text';
       body.textContent = msg.content;
-    }
 
-    bubble.appendChild(sender);
-    bubble.appendChild(body);
-
-    if (msg.usage && !msg.error) {
-      const meta = document.createElement('div');
-      meta.className = 'message-meta';
-      const isEst = msg.usage.isEstimated ? 'est.' : 'rep.';
-      meta.textContent = `${msg.usage.totalTokens} tokens (${isEst})`;
-      bubble.appendChild(meta);
+      bubble.appendChild(sender);
+      bubble.appendChild(body);
     }
 
     messagesContainer.appendChild(bubble);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  }
+
+  // Global Event Delegation for Copy, Insert, and Full Response Copy
+  if (messagesContainer) {
+    messagesContainer.addEventListener('click', (e) => {
+      // Copy code snippet
+      const btnCopyCode = e.target.closest('.btn-copy-code');
+      if (btnCopyCode) {
+        const codeContainer = btnCopyCode.closest('.code-block-container');
+        const rawArea = codeContainer ? codeContainer.querySelector('.raw-code') : null;
+        const code = rawArea ? rawArea.value : '';
+        if (code) {
+          copyToClipboard(code);
+          btnCopyCode.classList.add('copied');
+          const textSpan = btnCopyCode.querySelector('.btn-text');
+          const oldText = textSpan ? textSpan.textContent : 'Copy';
+          if (textSpan) textSpan.textContent = 'Copied!';
+          setTimeout(() => {
+            btnCopyCode.classList.remove('copied');
+            if (textSpan) textSpan.textContent = oldText;
+          }, 2000);
+        }
+        return;
+      }
+
+      // Insert code snippet at editor cursor
+      const btnInsertCode = e.target.closest('.btn-insert-code');
+      if (btnInsertCode) {
+        const codeContainer = btnInsertCode.closest('.code-block-container');
+        const rawArea = codeContainer ? codeContainer.querySelector('.raw-code') : null;
+        const code = rawArea ? rawArea.value : '';
+        if (code && vscode) {
+          vscode.postMessage({ command: 'insertCode', text: code });
+          btnInsertCode.classList.add('inserted');
+          const textSpan = btnInsertCode.querySelector('.btn-text');
+          const oldText = textSpan ? textSpan.textContent : 'Insert';
+          if (textSpan) textSpan.textContent = 'Inserted!';
+          setTimeout(() => {
+            btnInsertCode.classList.remove('inserted');
+            if (textSpan) textSpan.textContent = oldText;
+          }, 2000);
+        }
+        return;
+      }
+
+      // Copy whole response
+      const btnCopyResponse = e.target.closest('.btn-copy-response');
+      if (btnCopyResponse) {
+        const bubble = btnCopyResponse.closest('.message-bubble');
+        const rawArea = bubble ? bubble.querySelector('.raw-message-content') : null;
+        const text = rawArea ? rawArea.value : (bubble ? bubble.innerText : '');
+        if (text) {
+          copyToClipboard(text);
+          btnCopyResponse.classList.add('copied');
+          const textSpan = btnCopyResponse.querySelector('.copy-resp-text');
+          if (textSpan) textSpan.textContent = 'Copied!';
+          setTimeout(() => {
+            btnCopyResponse.classList.remove('copied');
+            if (textSpan) textSpan.textContent = 'Copy Response';
+          }, 2000);
+        }
+        return;
+      }
+    });
   }
 
   function sendMessage() {
@@ -459,6 +846,7 @@
   }
 
   const DEFAULT_MODELS = {
+    freellmapi: [],
     gemini: [
       { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Fast multimodal model', isFree: true },
       { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Next-gen multimodal model', isFree: true },
@@ -546,19 +934,22 @@
     modalApiKeyInput.value = '';
 
     const isOllama = providerId === 'ollama';
+    const isFreeLLMAPI = providerId === 'freellmapi';
     const isCloudflare = providerId === 'cloudflare';
     const isNvidia = providerId === 'nvidia';
     modalGroupKey.style.display = isOllama ? 'none' : 'flex';
-    modalGroupEndpoint.style.display = (isOllama || isCloudflare || isNvidia) ? 'flex' : 'none';
+    modalGroupEndpoint.style.display = (isOllama || isFreeLLMAPI || isCloudflare || isNvidia) ? 'flex' : 'none';
 
     if (modalEndpointLabel) {
       if (isCloudflare) modalEndpointLabel.textContent = 'Cloudflare Account ID (Optional)';
       else if (isNvidia) modalEndpointLabel.textContent = 'NVIDIA NIM Base URL (Optional)';
+      else if (isFreeLLMAPI) modalEndpointLabel.textContent = 'FreeLLMAPI Base URL';
       else modalEndpointLabel.textContent = 'Ollama Server Endpoint';
     }
     if (modalEndpointHint) {
       if (isCloudflare) modalEndpointHint.textContent = 'Enter your 32-char Account ID or custom gateway URL.';
       else if (isNvidia) modalEndpointHint.textContent = 'Default: https://integrate.api.nvidia.com/v1';
+      else if (isFreeLLMAPI) modalEndpointHint.textContent = 'Default local router endpoint: http://127.0.0.1:31415/v1';
       else modalEndpointHint.textContent = "Default local server endpoint. Ensure 'ollama serve' is running.";
     }
 
@@ -579,11 +970,17 @@
       } else if (isOllama) {
         modalEndpointInput.placeholder = 'http://127.0.0.1:11434';
         modalEndpointInput.value = providerInfo.endpoint || 'http://127.0.0.1:11434';
+      } else if (isFreeLLMAPI) {
+        modalEndpointInput.placeholder = 'http://127.0.0.1:31415/v1';
+        modalEndpointInput.value = providerInfo.endpoint || 'http://127.0.0.1:31415/v1';
       }
     }
 
     if (modalPrioritySelect) {
       modalPrioritySelect.value = String(providerInfo.priority || 1);
+    }
+    if (modalSelectionMode) {
+      modalSelectionMode.value = providerInfo.selectionMode || 'manual';
     }
 
     const initialModels = DEFAULT_MODELS[providerId] || [];
@@ -642,6 +1039,7 @@
 
     const providerInfo = cachedProvidersList.find(p => p.id === modalTargetProvider);
     const priorityVal = modalPrioritySelect ? Number(modalPrioritySelect.value) : 1;
+    const selectionMode = modalSelectionMode ? modalSelectionMode.value : 'manual';
 
     if (modalTargetProvider === 'ollama') {
       const endpoint = (modalEndpointInput && modalEndpointInput.value.trim()) || 'http://127.0.0.1:11434';
@@ -666,7 +1064,7 @@
         return;
       }
 
-      const endpointVal = ((modalTargetProvider === 'cloudflare' || modalTargetProvider === 'nvidia') && modalEndpointInput)
+      const endpointVal = ((modalTargetProvider === 'cloudflare' || modalTargetProvider === 'nvidia' || modalTargetProvider === 'freellmapi') && modalEndpointInput)
         ? (modalEndpointInput.value.trim() || undefined)
         : undefined;
 
@@ -678,7 +1076,8 @@
           provider: modalTargetProvider,
           apiKey: key || undefined,
           endpoint: endpointVal,
-          priority: priorityVal
+          priority: priorityVal,
+          selectionMode
         });
       }
     }
@@ -690,6 +1089,7 @@
     const providerInfo = cachedProvidersList.find(p => p.id === modalTargetProvider);
     let selectedModel = modalModelSelect ? modalModelSelect.value : null;
     const priorityVal = modalPrioritySelect ? Number(modalPrioritySelect.value) : 1;
+    const selectionMode = modalSelectionMode ? modalSelectionMode.value : 'manual';
 
     if (!selectedModel || selectedModel.startsWith('Loading')) {
       const defaults = DEFAULT_MODELS[modalTargetProvider] || [];
@@ -710,6 +1110,7 @@
           endpoint: endpoint,
           model: selectedModel,
           priority: priorityVal,
+          selectionMode,
           activate: true
         });
       }
@@ -731,7 +1132,7 @@
         return;
       }
 
-      const endpointVal = ((modalTargetProvider === 'cloudflare' || modalTargetProvider === 'nvidia') && modalEndpointInput)
+      const endpointVal = ((modalTargetProvider === 'cloudflare' || modalTargetProvider === 'nvidia' || modalTargetProvider === 'freellmapi') && modalEndpointInput)
         ? (modalEndpointInput.value.trim() || undefined)
         : undefined;
 
@@ -755,6 +1156,7 @@
             model: selectedModel,
             endpoint: endpointVal,
             priority: priorityVal,
+            selectionMode,
             activate: true
           });
         }
@@ -795,7 +1197,7 @@
     modalBtnRefreshModels.addEventListener('click', () => {
       if (!modalTargetProvider) return;
       const keyVal = modalApiKeyInput ? modalApiKeyInput.value.trim() : '';
-      const endpointVal = ((modalTargetProvider === 'cloudflare' || modalTargetProvider === 'nvidia' || modalTargetProvider === 'ollama') && modalEndpointInput)
+      const endpointVal = ((modalTargetProvider === 'cloudflare' || modalTargetProvider === 'nvidia' || modalTargetProvider === 'ollama' || modalTargetProvider === 'freellmapi') && modalEndpointInput)
         ? modalEndpointInput.value.trim()
         : undefined;
 
@@ -994,6 +1396,16 @@
     } else {
       dashTokenType.textContent = 'No token usage recorded yet.';
     }
+    if (data.providerUsageMessage) {
+      dashTokenType.textContent = data.providerUsageMessage;
+    } else if (data.providerUsage) {
+      const requests = data.providerUsage.requests;
+      const tokensUsed = data.providerUsage.tokens;
+      dashTokenType.textContent =
+        Number.isFinite(requests) || Number.isFinite(tokensUsed)
+          ? `FreeLLMAPI usage: ${Number.isFinite(requests) ? `${requests} requests` : 'requests unavailable'}; ${Number.isFinite(tokensUsed) ? `${tokensUsed} tokens` : 'tokens unavailable'}`
+          : 'FreeLLMAPI provider usage available.';
+    }
 
     // Velocity & API Limit Guard
     const velocity = data.velocity || { rpm: 0, tpm: 0, maxRpm: 30, maxTpm: 6000, status: 'Optimal', headroomPercent: 100, description: 'Standard Tier' };
@@ -1074,8 +1486,41 @@
 
       case 'messageAdded':
         hideTyping();
+        const streamingBubble = messagesContainer.querySelector('.message-bubble.assistant.streaming');
+        if (streamingBubble) streamingBubble.remove();
         appendMessage(msg.message);
         break;
+
+      case 'messageDelta': {
+        hideTyping();
+        let bubble = messagesContainer.querySelector('.message-bubble.assistant.streaming');
+        if (!bubble) {
+          bubble = document.createElement('div');
+          bubble.className = 'message-bubble assistant streaming';
+          bubble.innerHTML = `
+            <textarea class="raw-message-content" style="display:none;"></textarea>
+            <div class="message-sender-bar">
+              <div class="assistant-identity">
+                <svg class="assistant-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                </svg>
+                <span class="assistant-name">Laven</span>
+                <span class="streaming-dot"></span>
+              </div>
+              <span class="active-model-tag">${currentActiveModel || 'AI'}</span>
+            </div>
+            <div class="message-text assistant-text md-content"></div>
+          `;
+          messagesContainer.appendChild(bubble);
+        }
+        const rawArea = bubble.querySelector('.raw-message-content');
+        if (rawArea) rawArea.value = msg.message.content;
+        const parsed = parseMarkdown(msg.message.content);
+        const body = bubble.querySelector('.message-text');
+        if (body) body.innerHTML = parsed.html;
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        break;
+      }
 
       case 'chatCleared':
         hideTyping();

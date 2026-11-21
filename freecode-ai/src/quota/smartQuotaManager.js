@@ -200,8 +200,11 @@ class SmartQuotaManager {
     if (mode === 'hybrid') {
       const localFirst = this.getConfig('localFirst', true);
       const ollamaConfig = ordered.find(p => p.id === PROVIDERS.OLLAMA);
+      const activeId = this.providerManager && typeof this.providerManager.getActiveProvider === 'function'
+        ? this.providerManager.getActiveProvider()
+        : null;
 
-      if (localFirst && ollamaConfig) {
+      if (localFirst && ollamaConfig && activeId !== PROVIDERS.FREELLMAPI) {
         const cd = this.usageTracker.getCooldownInfo(PROVIDERS.OLLAMA);
         const circuit = this._getCircuitState(PROVIDERS.OLLAMA);
 
@@ -252,6 +255,13 @@ class SmartQuotaManager {
 
       // Candidate meets all eligibility criteria and is highest in user priority!
       this._log(`${candidate.name} selected according to user priority #${candidate.priority}.`);
+      if (candidate.id === PROVIDERS.FREELLMAPI) {
+        const freeConfig = await this.providerManager.getProviderConfiguration(PROVIDERS.FREELLMAPI);
+        if (freeConfig.selectionMode !== 'manual') {
+          candidate.model = 'auto:fast';
+          this._log('FreeLLMAPI inline completion using automatic fast routing.');
+        }
+      }
       return { provider: candidate, providerId: candidate.id, model: candidate.model, isLocal: false, reason: null };
     }
 

@@ -244,17 +244,18 @@ class ProviderManager {
 
   _getDefaultPriority(providerId) {
     const defaults = {
-      gemini: 1,
-      groq: 2,
-      openrouter: 3,
-      ollama: 4,
-      cohere: 5,
-      cloudflare: 6,
-      mistral: 7,
-      nvidia: 8,
-      deepseek: 9,
-      huggingface: 10,
-      openai: 11
+      freellmapi: 1,
+      gemini: 2,
+      groq: 3,
+      openrouter: 4,
+      ollama: 5,
+      cohere: 6,
+      cloudflare: 7,
+      mistral: 8,
+      nvidia: 9,
+      deepseek: 10,
+      huggingface: 11,
+      openai: 12
     };
     return defaults[providerId] || 99;
   }
@@ -272,7 +273,8 @@ class ProviderManager {
       model: stored.model || getDefaultModelId(providerId) || meta.defaultModel,
       endpoint: stored.endpoint || meta.defaultEndpoint || null,
       connectionState: this._connectionStates.get(providerId) || stored.connectionState || 'untested',
-      priority: stored.priority !== undefined ? Number(stored.priority) : this._getDefaultPriority(providerId)
+      priority: stored.priority !== undefined ? Number(stored.priority) : this._getDefaultPriority(providerId),
+      selectionMode: stored.selectionMode === 'manual' ? 'manual' : 'auto'
     };
   }
 
@@ -300,6 +302,9 @@ class ProviderManager {
     if (updates.connectionState !== undefined) {
       config[providerId].connectionState = updates.connectionState;
       this._connectionStates.set(providerId, updates.connectionState);
+    }
+    if (updates.selectionMode !== undefined) {
+      config[providerId].selectionMode = updates.selectionMode === 'auto' ? 'auto' : 'manual';
     }
     await this._saveConfig(config);
   }
@@ -411,6 +416,7 @@ class ProviderManager {
       selectedModel: config.model,
       endpoint: config.endpoint,
       priority: config.priority,
+      selectionMode: config.selectionMode,
       isActive,
       apiKeyUrl: meta.apiKeyUrl || null
     };
