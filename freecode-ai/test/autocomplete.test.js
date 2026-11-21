@@ -69,6 +69,24 @@ async function run() {
   assert.strictEqual(cache.stats.hits, 1);
   assert.strictEqual(cache.stats.requestsAvoided, 1);
 
+  // 6. Gemini message formatting extracts system instruction and ensures alternating turns
+  const { GeminiProvider } = require('../src/providers/geminiProvider');
+  const gemini = new GeminiProvider({ apiKey: 'mock-key' });
+  const formattedContents = gemini._formatContents(chatMsgs);
+  // Verify contents does NOT contain role 'system'
+  assert.strictEqual(formattedContents.some(c => c.role === 'system'), false);
+  // Verify contents starts with 'user'
+  assert.strictEqual(formattedContents[0].role, 'user');
+  // Verify no consecutive identical roles
+  for (let i = 1; i < formattedContents.length; i++) {
+    assert.notStrictEqual(formattedContents[i].role, formattedContents[i - 1].role);
+  }
+
+  // 7. ContextCollector supports extended languages including plaintext
+  assert.strictEqual(ContextCollector.SUPPORTED_LANGUAGES.has('plaintext'), true);
+  assert.strictEqual(ContextCollector.SUPPORTED_LANGUAGES.has('yaml'), true);
+  assert.strictEqual(ContextCollector.SUPPORTED_LANGUAGES.has('vue'), true);
+
   console.log('All Autocomplete Unit Tests Passed!\n');
 }
 

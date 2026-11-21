@@ -129,7 +129,7 @@
         },
         "laven.inline.debounceMs": {
           "type": "number",
-          "default": 1200,
+          "default": 350,
           "description": "Milliseconds of typing pause required before an inline completion request is dispatched."
         },
         "laven.inline.maxInputTokens": {

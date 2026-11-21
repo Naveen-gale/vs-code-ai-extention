@@ -138,16 +138,22 @@ class SmartQuotaManager {
    */
   async getPriorityOrderedProviders() {
     const configured = await this.providerManager.getConfiguredProviders();
+    const activeId = this.providerManager && typeof this.providerManager.getActiveProvider === 'function'
+      ? this.providerManager.getActiveProvider()
+      : null;
     const list = [];
 
     for (const id of configured) {
       const cfg = await this.providerManager.getProviderConfiguration(id);
       const meta = PROVIDER_METADATA[id] || { id, name: id, defaultModel: 'default' };
+      const priority = typeof cfg.priority === 'number'
+        ? cfg.priority
+        : (id === activeId ? 0 : 99);
       list.push({
         id,
         name: meta.name || id,
         model: cfg.model || meta.defaultModel,
-        priority: typeof cfg.priority === 'number' ? cfg.priority : 99,
+        priority,
         isLocal: id === PROVIDERS.OLLAMA
       });
     }

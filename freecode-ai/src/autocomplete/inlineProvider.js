@@ -65,8 +65,8 @@ class LavenInlineCompletionProvider {
     const now = Date.now();
     this._lastTypeTimes.set(docKey, now);
 
-    // 4. Debounce: wait for user to pause typing before sending network requests
-    const debounceMs = this.quotaManager.getConfig('debounceMs', 1200);
+    // 4. Debounce: wait for user to pause typing before sending network requests (default 350ms)
+    const debounceMs = this.quotaManager.getConfig('debounceMs', 350);
     if (debounceMs > 0) {
       await new Promise(resolve => setTimeout(resolve, debounceMs));
 
@@ -142,14 +142,16 @@ class LavenInlineCompletionProvider {
       });
 
       const maxOutputTokens = this.quotaManager.getConfig('maxOutputTokens', 96);
+      const systemPrompt = messages[0]?.role === 'system' ? messages[0].content : '';
 
       // 11. Execute request
       let response = null;
       try {
         response = await provider.complete(messages, {
+          systemPrompt,
           maxTokens: maxOutputTokens,
           temperature: 0.1,
-          timeoutMs: selection.isLocal ? 10000 : 8000
+          timeoutMs: selection.isLocal ? 3000 : 8000
         });
       } catch (err) {
         // If aborted by user typing or cancellation, exit cleanly without recording failure
@@ -240,7 +242,9 @@ class LavenInlineCompletionProvider {
         });
 
         const maxOutputTokens = this.quotaManager.getConfig('maxOutputTokens', 96);
+        const systemPrompt = messages[0]?.role === 'system' ? messages[0].content : '';
         const response = await provider.complete(messages, {
+          systemPrompt,
           maxTokens: maxOutputTokens,
           temperature: 0.1,
           timeoutMs: 8000
@@ -308,7 +312,11 @@ function registerInlineProvider(context, deps) {
   let disposable = { dispose: () => {} };
   if (vscode.languages && typeof vscode.languages.registerInlineCompletionItemProvider === 'function') {
     disposable = vscode.languages.registerInlineCompletionItemProvider(
-      { pattern: '**' },
+      [
+        { pattern: '**' },
+        { scheme: 'file' },
+        { scheme: 'untitled' }
+      ],
       provider
     );
   }

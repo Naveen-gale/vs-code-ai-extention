@@ -14,13 +14,32 @@ class GeminiProvider {
 
   /**
    * Format standard chat messages into Gemini's format.
+   * Ensures roles strictly alternate and merges consecutive turns with same role.
+   * Excludes system messages (which are set on systemInstruction).
    * @param {Array<{role: string, content: string}>} messages
    */
   _formatContents(messages) {
-    return messages.map(msg => ({
-      role: msg.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: msg.content || '' }]
-    }));
+    const formatted = [];
+    for (const msg of messages) {
+      if (msg.role === 'system') continue;
+      const role = msg.role === 'assistant' || msg.role === 'model' ? 'model' : 'user';
+      const text = msg.content || '';
+      if (formatted.length > 0 && formatted[formatted.length - 1].role === role) {
+        formatted[formatted.length - 1].parts.push({ text });
+      } else {
+        formatted.push({
+          role,
+          parts: [{ text }]
+        });
+      }
+    }
+    // Gemini requires the contents array to start with a 'user' turn
+    if (formatted.length === 0) {
+      formatted.push({ role: 'user', parts: [{ text: '' }] });
+    } else if (formatted[0].role !== 'user') {
+      formatted.unshift({ role: 'user', parts: [{ text: '' }] });
+    }
+    return formatted;
   }
 
   /**
@@ -37,6 +56,14 @@ class GeminiProvider {
     const cleanModel = modelName.startsWith('models/') ? modelName.replace('models/', '') : modelName;
     const url = `${this.baseUrl}/v1beta/models/${cleanModel}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
 
+    // Extract any system prompt from config or messages array
+    let systemText = config.systemPrompt || '';
+    for (const m of messages) {
+      if (m.role === 'system' && m.content) {
+        systemText = systemText ? `${systemText}\n\n${m.content}` : m.content;
+      }
+    }
+
     const contents = this._formatContents(messages);
 
     const body = {
@@ -47,9 +74,9 @@ class GeminiProvider {
       }
     };
 
-    if (config.systemPrompt) {
+    if (systemText) {
       body.systemInstruction = {
-        parts: [{ text: config.systemPrompt }]
+        parts: [{ text: systemText }]
       };
     }
 

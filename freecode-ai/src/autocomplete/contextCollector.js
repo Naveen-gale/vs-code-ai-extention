@@ -10,7 +10,10 @@ class ContextCollector {
     return new Set([
       'javascript', 'javascriptreact', 'typescript', 'typescriptreact',
       'python', 'html', 'css', 'json', 'markdown', 'java', 'c', 'cpp',
-      'csharp', 'go', 'rust', 'php', 'ruby', 'shellscript', 'sql'
+      'csharp', 'go', 'rust', 'php', 'ruby', 'shellscript', 'sql',
+      'plaintext', 'vue', 'svelte', 'dart', 'kotlin', 'swift', 'yaml',
+      'xml', 'scss', 'less', 'dockerfile', 'lua', 'r', 'scala', 'perl',
+      'powershell', 'bat', 'ini', 'toml', 'latex', 'graphql'
     ]);
   }
 
