@@ -47,7 +47,7 @@ async function run() {
 
   const rawWithIntro = 'Here is the code:\n  return x * 2;';
   const cleanedIntro = SuggestionParser.parse(rawWithIntro);
-  assert.strictEqual(cleanedIntro.trim(), 'return x * 2;');
+  assert.strictEqual(cleanedIntro, '');
 
   // 4. ContextCollector secret sanitization
   const secretText = 'const API_KEY = "sk-1234567890abcdef1234567890abcdef";';
@@ -109,6 +109,20 @@ async function run() {
   assert.ok(qualityPrompt[1].content.includes('subtract'));
   assert.ok(qualityPrompt[1].content.includes('<CURSOR>' ) || qualityPrompt[1].content.includes('INSERTION'));
 
+  const { buildInlineCompletionMessages, buildInlineCompletionPrompt } = PromptBuilder;
+  const strictMessages = buildInlineCompletionMessages({
+    language: 'python',
+    prefix: 'import os\nimport ',
+    suffix: '',
+    imports: ['os']
+  });
+  assert.strictEqual(strictMessages[0].role, 'system');
+  assert.ok(strictMessages[0].content.includes('Never explain'));
+  assert.ok(strictMessages[0].content.includes('Never repeat code'));
+  assert.ok(strictMessages[1].content.includes('Language: python'));
+  assert.ok(strictMessages[1].content.includes('<CURSOR>'));
+  assert.ok(buildInlineCompletionPrompt({ language: 'python', prefix: 'import ', suffix: '' }).includes('Return only the insertion text.'));
+
   // 9. Exact Python regression: cursor immediately after print
   const rawPython =
     'print("Sum:", add(int(a), int(b)))\n' +
@@ -160,6 +174,51 @@ async function run() {
     ),
     ''
   );
+  for (const prose of [
+    'We need to complete the statement.',
+    'The code before cursor is import os.',
+    'Here is the suggested code:\n```python\nsys\n```',
+    '```text\nLet me think through this problem.\n```'
+  ]) {
+    assert.strictEqual(
+      InlineQualityPipeline.postProcess(prose, {
+        language: 'python',
+        prefix: 'import os\nimport ',
+        suffix: '',
+        linePrefix: 'import ',
+        lineSuffix: ''
+      }),
+      '',
+      `Prose must not be suggested: ${prose}`
+    );
+  }
+
+  assert.strictEqual(
+    InlineQualityPipeline.postProcess(
+      '# Keep this comment: the code before cursor is useful.',
+      { language: 'python', prefix: '', suffix: '', linePrefix: '', lineSuffix: '' }
+    ),
+    '# Keep this comment: the code before cursor is useful.'
+  );
+  assert.strictEqual(
+    InlineQualityPipeline.postProcess(
+      'message = "We need to preserve this string."',
+      { language: 'python', prefix: '', suffix: '', linePrefix: '', lineSuffix: '' }
+    ),
+    'message = "We need to preserve this string."'
+  );
+
+  const middleInsertion = InlineQualityPipeline.postProcess(
+    'const result = foobar;',
+    {
+      language: 'javascript',
+      prefix: 'const result = fo',
+      suffix: 'r;',
+      linePrefix: 'const result = fo',
+      lineSuffix: 'r;'
+    }
+  );
+  assert.strictEqual(middleInsertion, 'oba');
 
   // 11. Local prediction completes the exact Python print cursor without repeating print
   const exactPythonPrefix =

@@ -367,6 +367,157 @@ class MockMemento {
     assert.deepStrictEqual(res1, [], 'Cancelled request during debounce must yield 0 results');
   });
 
+  await test('TEST 13: Inline completions insert only cursor-relative code across languages', async () => {
+    const h = createTestHarness();
+    configStore.set('laven.inline.completionMode', 'cloud');
+    configStore.set('laven.inline.localOnly', false);
+    await h.secretManager.storeApiKey(PROVIDERS.FREELLMAPI, 'freellmapi-test-key');
+    await h.providerManager.setProviderConfiguration(PROVIDERS.FREELLMAPI, {
+      model: 'inline-test-model',
+      endpoint: 'http://127.0.0.1:31415/v1'
+    });
+
+    h.quotaManager.getConfig = (key, fallback) => {
+      if (key === 'debounceMs') return 0;
+      if (key === 'maxInputTokens') return 1500;
+      if (key === 'maxOutputTokens') return 64;
+      return configStore.has(`laven.inline.${key}`)
+        ? configStore.get(`laven.inline.${key}`)
+        : fallback;
+    };
+
+    const cases = [
+      {
+        language: 'python',
+        source: 'import os\nimport ',
+        position: { line: 1, character: 7 },
+        response: 'sys',
+        expectedInsertion: 'sys',
+        expectedDocument: 'import os\nimport sys'
+      },
+      {
+        language: 'javascript',
+        source: 'function add(a, b) {\n    \n}',
+        position: { line: 1, character: 4 },
+        response: 'return a + b;',
+        expectedInsertion: 'return a + b;',
+        expectedDocument: 'function add(a, b) {\n    return a + b;\n}'
+      },
+      {
+        language: 'java',
+        source: 'public class Main {\n    public static void main(String[] args) {\n        \n    }\n}',
+        position: { line: 2, character: 8 },
+        response: 'System.out.println("Hello, world!");',
+        expectedInsertion: 'System.out.println("Hello, world!");',
+        expectedDocument: 'public class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, world!");\n    }\n}'
+      },
+      {
+        language: 'html',
+        source: '<div>\n    \n</div>',
+        position: { line: 1, character: 4 },
+        response: '<p>Hello</p>',
+        expectedInsertion: '<p>Hello</p>',
+        expectedDocument: '<div>\n    <p>Hello</p>\n</div>'
+      },
+      {
+        language: 'css',
+        source: '.container {\n    \n}',
+        position: { line: 1, character: 4 },
+        response: 'display: flex;',
+        expectedInsertion: 'display: flex;',
+        expectedDocument: '.container {\n    display: flex;\n}'
+      },
+      {
+        language: 'sql',
+        source: 'SELECT *\nFROM users\n',
+        position: { line: 2, character: 0 },
+        response: 'ORDER BY id;',
+        expectedInsertion: 'ORDER BY id;',
+        expectedDocument: 'SELECT *\nFROM users\nORDER BY id;'
+      },
+      {
+        language: 'javascript',
+        source: 'const result = fobar;',
+        position: { line: 0, character: 17 },
+        response: 'const result = foobar;',
+        expectedInsertion: 'o',
+        expectedDocument: 'const result = foobar;'
+      }
+    ];
+
+    const { ProviderFactory } = require('../src/providers/providerFactory');
+    const originalCreate = ProviderFactory.create;
+    let responseIndex = 0;
+    ProviderFactory.create = (providerId) => {
+      assert.strictEqual(providerId, PROVIDERS.FREELLMAPI);
+      return {
+        completeInline: async (prefix, suffix, requestConfig) => {
+          const current = cases[responseIndex++];
+          assert.ok(requestConfig.inlinePrompt.includes(`Language: ${current.language}`));
+          assert.ok(requestConfig.inlinePrompt.includes('<CURSOR>'));
+          return { text: current.response, finishReason: 'stop', usage: {} };
+        }
+      };
+    };
+
+    const makeDocument = (testCase, index) => {
+      const lines = testCase.source.split(/\r?\n/);
+      const lineOffsets = [];
+      let offset = 0;
+      for (const line of lines) {
+        lineOffsets.push(offset);
+        offset += line.length + 1;
+      }
+      return {
+        uri: { toString: () => `file:///inline-regression-${index}.${testCase.language}` },
+        fileName: `inline-regression-${index}.${testCase.language}`,
+        languageId: testCase.language,
+        lineCount: lines.length,
+        lineAt: line => ({ text: lines[line] }),
+        getText: () => testCase.source,
+        offsetAt: position => lineOffsets[position.line] + position.character
+      };
+    };
+
+    try {
+      const inlineProvider = new LavenInlineCompletionProvider({
+        quotaManager: h.quotaManager,
+        secretManager: h.secretManager,
+        providerManager: h.providerManager
+      });
+
+      for (let index = 0; index < cases.length; index++) {
+        const current = cases[index];
+        const document = makeDocument(current, index);
+        const position = new mockVscode.Position(current.position.line, current.position.character);
+        const items = await inlineProvider.provideInlineCompletionItems(
+          document,
+          position,
+          {},
+          { isCancellationRequested: false }
+        );
+        assert.strictEqual(items.length, 1, `${current.language} should return one completion for ${JSON.stringify(current.source)} (requests: ${responseIndex})`);
+        const item = items[0];
+        assert.strictEqual(item.insertText, current.expectedInsertion);
+        assert.strictEqual(item.range.start.line, position.line);
+        assert.strictEqual(item.range.start.character, position.character);
+        assert.strictEqual(item.range.end.line, position.line);
+        assert.strictEqual(item.range.end.character, position.character);
+
+        const cursorOffset = document.offsetAt(position);
+        const insertedDocument =
+          current.source.slice(0, cursorOffset) +
+          item.insertText +
+          current.source.slice(cursorOffset);
+        assert.strictEqual(insertedDocument, current.expectedDocument);
+      }
+      assert.strictEqual(responseIndex, cases.length);
+    } finally {
+      ProviderFactory.create = originalCreate;
+      configStore.set('laven.inline.completionMode', 'hybrid');
+    }
+  });
+
   // 13. Only one request per document
   await test('TEST 13: Concurrency manager cancels older pending request when new one begins', () => {
     const h = createTestHarness();

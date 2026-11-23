@@ -154,6 +154,71 @@ class MockState {
     }
   });
 
+  await test('FreeLLMAPI inline extraction accepts assistant content and rejects tool/error output', async () => {
+    const original = httpClient.request;
+    let responseBody = { choices: [{ message: { role: 'assistant', content: 'sys' } }] };
+    httpClient.request = async () => responseBody;
+    try {
+      const provider = ProviderFactory.create('freellmapi', {
+        apiKey: 'freellmapi-test',
+        model: 'live-model-a',
+        endpoint: 'http://127.0.0.1:31415/v1'
+      });
+      assert.strictEqual((await provider.completeInline('import ', '', {})).text, 'sys');
+
+      responseBody = { choices: [{ text: 'do not use', finish_reason: 'tool_calls', tool_calls: [{}] }] };
+      assert.strictEqual((await provider.completeInline('import ', '', {})).text, '');
+
+      responseBody = { choices: [{ text: 'filtered content', finish_reason: 'content_filter' }] };
+      assert.strictEqual((await provider.completeInline('import ', '', {})).text, '');
+
+      responseBody = { choices: [{ message: { role: 'user', content: 'not assistant output' } }] };
+      assert.strictEqual((await provider.completeInline('import ', '', {})).text, '');
+
+      responseBody = { choices: [{}] };
+      assert.strictEqual((await provider.completeInline('import ', '', {})).text, '');
+
+      responseBody = { id: 'request-id', prompt: 'request metadata must not become code' };
+      assert.strictEqual((await provider.completeInline('import ', '', {})).text, '');
+
+      responseBody = { error: { message: 'provider error must not be code' } };
+      assert.strictEqual((await provider.completeInline('import ', '', {})).text, '');
+    } finally {
+      httpClient.request = original;
+    }
+  });
+
+  await test('FreeLLMAPI streaming aggregates only assistant content and preserves finish reason', async () => {
+    const originalFetch = global.fetch;
+    const chunks = [
+      'data: {"choices":[{"delta":{"content":"sys"}}]}\n',
+      'data: {"choices":[{"delta":{"content":"tem"},"finish_reason":"stop"}]}\n',
+      'data: [DONE]\n'
+    ];
+    global.fetch = async () => ({
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: async () => chunks.length
+            ? { done: false, value: Buffer.from(chunks.shift()) }
+            : { done: true }
+        })
+      }
+    });
+    try {
+      const provider = ProviderFactory.create('freellmapi', {
+        apiKey: 'freellmapi-test',
+        model: 'live-model-a',
+        endpoint: 'http://127.0.0.1:31415/v1'
+      });
+      const response = await provider.completeStream([{ role: 'user', content: 'completion' }]);
+      assert.strictEqual(response.text, 'system');
+      assert.strictEqual(response.finishReason, 'stop');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   await test('ModelRouter supports FreeLLMAPI auto routing modes', async () => {
     const secrets = new MockSecrets();
     const state = new MockState();

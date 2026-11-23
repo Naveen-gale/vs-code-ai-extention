@@ -56,7 +56,7 @@ class ContextCollector {
     // Determine if context is meaningful for requesting a suggestion
     const trimmedLine = linePrefix.trim();
     // Meaningful if: line has characters, or preceding lines have code context
-    const hasCodeContext = prefix.trim().length > 10;
+    const hasCodeContext = prefix.trim().length > 0;
     const isMeaningful = (trimmedLine.length > 0 || hasCodeContext) && !this.isIgnoredFile(document.fileName);
 
     return {

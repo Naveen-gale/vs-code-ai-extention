@@ -159,7 +159,8 @@ class LavenInlineCompletionProvider {
       });
 
       // 10. Build bounded prompt
-      const messages = PromptBuilder.buildQualityChatMessages(qualityContext);
+      const messages = PromptBuilder.buildInlineCompletionMessages(qualityContext);
+      const inlinePrompt = PromptBuilder.buildInlineCompletionPrompt(qualityContext);
 
       const maxOutputTokens = this.quotaManager.getConfig('maxOutputTokens', 96);
       const systemPrompt = messages[0]?.role === 'system' ? messages[0].content : '';
@@ -175,7 +176,7 @@ class LavenInlineCompletionProvider {
             temperature: 0.1,
             timeoutMs: 4500,
             signal: abortCtrl.signal,
-            inlinePrompt: `${messages[0].content}\n\n${messages[1].content}`
+            inlinePrompt
           });
         } else {
           response = await provider.complete(messages, {
@@ -222,6 +223,9 @@ class LavenInlineCompletionProvider {
 
       const rawText = response ? response.text : '';
       if (!rawText) return [];
+      if (response.finishReason && /^(?:tool_calls?|function_call|content_filter|safety|error)$/i.test(response.finishReason)) {
+        return [];
+      }
 
       // 12. Parse & sanitize suggestion
       const cleanSuggestion = SuggestionParser.parse(rawText, {
@@ -293,7 +297,8 @@ class LavenInlineCompletionProvider {
           linePrefix: ctx.linePrefix,
           lineSuffix: ctx.lineSuffix
         });
-        const messages = PromptBuilder.buildQualityChatMessages(qualityContext);
+        const messages = PromptBuilder.buildInlineCompletionMessages(qualityContext);
+        const inlinePrompt = PromptBuilder.buildInlineCompletionPrompt(qualityContext);
 
         const maxOutputTokens = this.quotaManager.getConfig('maxOutputTokens', 96);
         const systemPrompt = messages[0]?.role === 'system' ? messages[0].content : '';
@@ -303,7 +308,7 @@ class LavenInlineCompletionProvider {
             maxTokens: Math.min(maxOutputTokens, 64),
             temperature: 0.1,
             timeoutMs: 4500,
-            inlinePrompt: `${messages[0].content}\n\n${messages[1].content}`
+            inlinePrompt
           })
           : await provider.complete(messages, {
             systemPrompt,
@@ -314,7 +319,9 @@ class LavenInlineCompletionProvider {
 
         if (token.isCancellationRequested) return [];
 
-        const clean = SuggestionParser.parse(response ? response.text : '', {
+        const clean = response && response.finishReason && /^(?:tool_calls?|function_call|content_filter|safety|error)$/i.test(response.finishReason)
+          ? ''
+          : SuggestionParser.parse(response ? response.text : '', {
           linePrefix: ctx.linePrefix,
           lineSuffix: ctx.lineSuffix,
           language: document.languageId,

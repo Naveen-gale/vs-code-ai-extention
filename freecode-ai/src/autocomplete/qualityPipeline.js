@@ -119,12 +119,17 @@ class InlineQualityPipeline {
     const lineEnding = context.lineEnding || '\n';
     let result = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
+    const prefix = context.prefix || '';
+    let removedFullPrefix = false;
+    if (prefix && result.startsWith(prefix)) {
+      result = result.slice(prefix.length);
+      removedFullPrefix = true;
+    }
+
     const linePrefix = context.linePrefix || '';
-    if (linePrefix) {
-      const prefixNoIndent = linePrefix.trimStart();
-      if (prefixNoIndent && result.startsWith(prefixNoIndent)) {
-        result = result.slice(prefixNoIndent.length);
-      }
+    if (!removedFullPrefix && linePrefix && result.startsWith(linePrefix)) {
+      result = result.slice(linePrefix.length);
+    } else if (!removedFullPrefix && linePrefix) {
       const maxOverlap = Math.min(40, linePrefix.length, result.length);
       for (let length = maxOverlap; length > 0; length--) {
         if (linePrefix.slice(-length) === result.slice(0, length)) {
@@ -134,9 +139,22 @@ class InlineQualityPipeline {
       }
     }
 
-    const lineSuffix = (context.lineSuffix || '').trim();
-    if (lineSuffix && result.trim().endsWith(lineSuffix)) {
-      result = result.trim().slice(0, -lineSuffix.length).trimEnd();
+    const suffix = context.suffix || '';
+    if (suffix && result.endsWith(suffix)) {
+      result = result.slice(0, -suffix.length);
+    }
+
+    const lineSuffix = context.lineSuffix || '';
+    if (lineSuffix && result.endsWith(lineSuffix)) {
+      result = result.slice(0, -lineSuffix.length);
+    } else if (lineSuffix) {
+      const maxOverlap = Math.min(40, result.length, lineSuffix.length);
+      for (let length = maxOverlap; length > 0; length--) {
+        if (result.slice(-length) === lineSuffix.slice(0, length)) {
+          result = result.slice(0, -length);
+          break;
+        }
+      }
     }
 
     result = result.replace(/^\n+/, '');
@@ -145,35 +163,83 @@ class InlineQualityPipeline {
     return result;
   }
 
-  static looksLikeProse(text) {
-    if (!text) return true;
-    const trimmed = text.trim();
-    if (!trimmed) return true;
-
-    if (/^(?:```|#\s|Here(?:'s| is)\b|Sure(?: thing)?[,.]?\b|Certainly\b|Explanation\b|The following\b|This (?:code|function|suggestion)\b|I (?:have |would |can |will )|You (?:can|could|should)\b|Note:?\b)/i.test(trimmed)) {
-      return true;
-    }
-
-    const lines = trimmed.split(/\r?\n/).filter(Boolean);
-    if (lines.length === 1) {
-      const codeSignals = /[{}()[\];=<>_$\\]|^\s*(?:def|class|if|for|while|try|except|return|print|import|from|const|let|var|function|async|await|public|private|protected|using|select|insert|update)\b/i.test(trimmed);
-      const sentenceSignal = /^(?:[A-Za-z][^{}()[\];=<>]*[.!?])$/.test(trimmed);
-      if (sentenceSignal && !codeSignals) return true;
+  static isCommentLine(line, language) {
+    const trimmed = line.trimStart();
+    if (/^(?:\/\/|\/\*|\*|<!--|-->|--\s)/.test(trimmed)) return true;
+    if (language === 'python' || language === 'shellscript' || language === 'ruby' ||
+        language === 'yaml' || language === 'r' || language === 'powershell' ||
+        language === 'bat' || language === 'toml' || language === 'ini') {
+      return trimmed.startsWith('#');
     }
     return false;
   }
 
-  static basicStructureValidation(text) {
+  static looksLikeProse(text, language) {
+    if (!text) return true;
+    const trimmed = text.trim();
+    if (!trimmed) return true;
+
+    if (/^(?:Here(?:'s| is)\b|Sure(?: thing)?[,.]?\b|Certainly\b|Explanation\b|The following\b|This (?:code|function|suggestion)\b|I (?:have |would |can |will )|You (?:can|could|should)\b|Note:?\b|We need to\b|The code before cursor\b|Let me think\b|Thinking through\b|To complete (?:this|the)\b|The task is to\b|Error:|Provider error:|Request failed:)/i.test(trimmed)) {
+      return true;
+    }
+
+    const lines = trimmed.split(/\r?\n/).filter(line => line.trim());
+    for (const line of lines) {
+      const lineText = line.trim();
+      if (InlineQualityPipeline.isCommentLine(line, language) ||
+          /^(?:["'`])/.test(lineText)) continue;
+      if (/^(?:We need to\b|The code before cursor\b|Here(?:'s| is)\b|Let me think\b|I think\b|This (?:code|function|suggestion)\b|The following\b|Explanation\b|In summary\b|First,?\s+we\b)/i.test(lineText)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static basicStructureValidation(text, language) {
     const pairs = { '(': ')', '[': ']', '{': '}' };
     const stack = [];
     let quote = null;
     let escaped = false;
+    let blockComment = false;
+    let lineComment = false;
     for (let i = 0; i < text.length; i++) {
       const char = text[i];
+      const next = text[i + 1];
+      if (lineComment) {
+        if (char === '\n') lineComment = false;
+        continue;
+      }
+      if (blockComment) {
+        if (char === '*' && next === '/') {
+          blockComment = false;
+          i++;
+        }
+        continue;
+      }
       if (quote) {
         if (escaped) { escaped = false; continue; }
         if (char === '\\') { escaped = true; continue; }
         if (char === quote) quote = null;
+        continue;
+      }
+      if (char === '/' && next === '*') {
+        blockComment = true;
+        i++;
+        continue;
+      }
+      if ((char === '/' && next === '/') ||
+          (language === 'sql' && char === '-' && next === '-') ||
+          (['python', 'shellscript', 'ruby', 'yaml', 'r', 'powershell', 'bat', 'toml', 'ini'].includes(language) && char === '#')) {
+        lineComment = true;
+        i += char === '/' || char === '-' ? 1 : 0;
+        continue;
+      }
+      if (char === '<' && text.slice(i, i + 4) === '<!--') {
+        blockComment = true;
+        const close = text.indexOf('-->', i + 4);
+        if (close === -1) return true;
+        i = close + 2;
+        blockComment = false;
         continue;
       }
       if (char === '"' || char === "'" || char === '`') {
@@ -190,30 +256,33 @@ class InlineQualityPipeline {
 
   static validateSyntax(text, context) {
     if (!text || !text.trim()) return false;
-    if (!InlineQualityPipeline.basicStructureValidation(text)) return false;
+    const language = context.language || '';
+    if (language !== 'markdown' && language !== 'plaintext') {
+      const surroundingCode = `${context.prefix || ''}${text}${context.suffix || ''}`;
+      if (!InlineQualityPipeline.basicStructureValidation(surroundingCode, language)) return false;
+    }
     return true;
   }
 
   static postProcess(rawText, context) {
     if (!rawText || typeof rawText !== 'string') return '';
-    const original = rawText.trimStart();
-    if (/^(?:Here(?:'s| is)\b|Sure(?: thing)?[,.]?\b|Certainly\b|Explanation\b|The following\b|This (?:code|function|suggestion)\b|I (?:have |would |can |will )|You (?:can|could|should)\b|Note:?\b)/i.test(original)) {
+    let text = rawText;
+    const trimmed = text.trim();
+    const fenced = trimmed.match(/^```[A-Za-z0-9_-]*\r?\n([\s\S]*?)\r?\n```$/);
+    if (fenced) {
+      text = fenced[1];
+    } else if (trimmed.includes('```')) {
       return '';
     }
-    let text = rawText
-      .replace(/^```[A-Za-z0-9_-]*\r?\n?/i, '')
-      .replace(/\r?\n?```\s*$/i, '')
-      .replace(/```/g, '')
+
+    if (InlineQualityPipeline.looksLikeProse(text, context.language)) return '';
+
+    text = text
       .replace(/<MID>|<PRE>|<SUF>|<EOT>|<FILL_ME>|<\|[^>]+\|>/g, '')
-      .replace(/^(?:Here(?:'s| is) (?:the |your )?(?:code|completion|suggestion|solution|snippet):?|Sure(?: thing)?,?\s*(?:here(?:'s| is) )?(?:the |your )?(?:code|snippet):?|Output:?|Solution:?)/i, '')
       .trimStart();
 
-    if (/```/.test(rawText)) {
-      text = text.replace(/^```[A-Za-z0-9_-]*\r?\n?/i, '');
-    }
-
     text = InlineQualityPipeline.stripDuplicateLines(text, context);
-    if (InlineQualityPipeline.looksLikeProse(text)) return '';
+    if (InlineQualityPipeline.looksLikeProse(text, context.language)) return '';
 
     if (context.language === 'python') {
       const indent = context.lineIndent || '';

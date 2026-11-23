@@ -6,6 +6,44 @@
  * and clean instruction format for cloud chat models.
  */
 class PromptBuilder {
+  static buildInlineCompletionMessages(context = {}) {
+    const language = context.language || 'plaintext';
+    const relevant = [
+      context.imports && context.imports.length ? `Existing imports: ${context.imports.join(', ')}` : '',
+      context.declarations && context.declarations.length ? `Existing functions: ${context.declarations.join(', ')}` : '',
+      context.variables && context.variables.length ? `Existing variables: ${context.variables.join(', ')}` : '',
+      context.classes && context.classes.length ? `Existing classes: ${context.classes.join(', ')}` : ''
+    ].filter(Boolean);
+
+    const systemPrompt =
+      `You are a code-completion engine for ${language}.\n` +
+      `Predict only the next code at the cursor and return only the exact text to insert.\n` +
+      `Never explain, describe the task, reveal reasoning, or include conversational text.\n` +
+      `Never repeat code before the cursor or return the source file.\n` +
+      `Never include Markdown fences or formatting.\n` +
+      `Follow the language, existing project symbols, indentation, and surrounding code.\n` +
+      `Continue incomplete statements correctly and do not duplicate code after the cursor.\n` +
+      `If no reliable code completion is possible, return an empty response.`;
+
+    const userContent =
+      `Language: ${language}\n` +
+      (relevant.length ? `Project context:\n${relevant.join('\n')}\n` : '') +
+      `Code before cursor:\n${context.prefix || ''}\n` +
+      `<CURSOR>\n` +
+      `Code after cursor:\n${context.suffix || ''}\n` +
+      `Return only the insertion text.`;
+
+    return [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent }
+    ];
+  }
+
+  static buildInlineCompletionPrompt(context = {}) {
+    const messages = PromptBuilder.buildInlineCompletionMessages(context);
+    return `${messages[0].content}\n\n${messages[1].content}`;
+  }
+
   static buildQualityChatMessages(context) {
     const { InlineQualityPipeline } = require('./qualityPipeline');
     return InlineQualityPipeline.buildPrompt(context);

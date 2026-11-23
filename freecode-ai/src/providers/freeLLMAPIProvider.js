@@ -1,5 +1,28 @@
 const httpClient = require('../utils/httpClient');
 
+function textContent(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter(part => part && (part.type === 'text' || part.type === 'output_text') && typeof part.text === 'string')
+    .map(part => part.text)
+    .join('');
+}
+
+function assistantChoiceText(choice) {
+  if (!choice || choice.tool_calls || choice.function_call || choice.message?.tool_calls || choice.message?.function_call) return '';
+  if (typeof choice.text === 'string' && choice.text.length > 0) return choice.text;
+  const message = choice.message;
+  if (message && (!message.role || message.role === 'assistant')) {
+    return textContent(message.content);
+  }
+  return '';
+}
+
+function unusableFinishReason(reason) {
+  return /^(?:tool_calls?|function_call|content_filter|safety|error)$/i.test(reason || '');
+}
+
 class FreeLLMAPIProvider {
   constructor(options = {}) {
     this.apiKey = options.apiKey;
@@ -91,10 +114,11 @@ class FreeLLMAPIProvider {
       })
     }, config.timeoutMs || 45000);
 
-    const choice = data?.choices?.[0];
+    const choice = Array.isArray(data?.choices) ? data.choices[0] : null;
+    const finishReason = choice?.finish_reason || 'stop';
     let text = '';
     if (typeof choice?.message?.content === 'string') text = choice.message.content;
-    else if (choice?.text) text = choice.text;
+    else if (typeof choice?.text === 'string') text = choice.text;
 
     const usage = data?.usage;
     const promptTokens = usage?.prompt_tokens || 0;
@@ -111,7 +135,7 @@ class FreeLLMAPIProvider {
     return {
       text,
       usage: finalUsage,
-      finishReason: choice?.finish_reason || 'stop',
+      finishReason,
       model: modelName,
       provider: this.providerId
     };
@@ -134,16 +158,17 @@ class FreeLLMAPIProvider {
       }),
       signal: config.signal
     }, config.timeoutMs || 15000);
-    const choice = data?.choices?.[0];
+    const choice = Array.isArray(data?.choices) ? data.choices[0] : null;
+    const finishReason = choice?.finish_reason || 'stop';
     return {
-      text: typeof choice?.text === 'string' ? choice.text : '',
+      text: unusableFinishReason(finishReason) ? '' : assistantChoiceText(choice),
       usage: data?.usage ? {
         promptTokens: data.usage.prompt_tokens || 0,
         completionTokens: data.usage.completion_tokens || 0,
         totalTokens: data.usage.total_tokens || 0,
         isEstimated: !data.usage.total_tokens
       } : { promptTokens: 0, completionTokens: 0, totalTokens: 0, isEstimated: true },
-      finishReason: choice?.finish_reason || 'stop',
+      finishReason,
       model: modelName,
       provider: this.providerId
     };
@@ -153,7 +178,10 @@ class FreeLLMAPIProvider {
     const boundedPrefix = String(prefix || '').slice(-1200);
     const boundedSuffix = String(suffix || '').slice(0, 300);
     const prompt = config.inlinePrompt ||
-      `CODE COMPLETION ONLY. Return only raw source code for insertion at <CURSOR>. No explanation, no Markdown, no commentary.\n\n` +
+      `You are a code-completion engine for ${config.language || 'the detected programming language'}.\n` +
+      `Return only the exact source code text to insert at <CURSOR>.\n` +
+      `Never explain, describe the task, reveal reasoning, repeat the prefix, return the whole file, or include Markdown or conversational text.\n` +
+      `Preserve indentation, continue incomplete statements, and do not duplicate the suffix.\n\n` +
       `${boundedPrefix}<CURSOR>${boundedSuffix}\n\nBEGIN RAW CODE:`;
     return await this.completeLegacy(prompt, {
       ...config,
@@ -210,6 +238,35 @@ class FreeLLMAPIProvider {
       const decoder = new TextDecoder();
       let buffer = '';
       let text = '';
+      let finishReason = 'stop';
+      let hasToolCalls = false;
+
+      const consumeLine = line => {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) return;
+        const payload = trimmed.slice(5).trim();
+        if (!payload || payload === '[DONE]') return;
+
+        const event = JSON.parse(payload);
+        if (event?.error) {
+          const message = typeof event.error === 'string' ? event.error : event.error.message;
+          throw new Error(message || 'FreeLLMAPI streaming request failed.');
+        }
+        const choice = Array.isArray(event?.choices) ? event.choices[0] : null;
+        if (!choice) return;
+        if (choice.finish_reason) finishReason = choice.finish_reason;
+        if (choice.tool_calls || choice.delta?.tool_calls || choice.delta?.function_call) hasToolCalls = true;
+
+        const chunk = typeof choice.delta?.content === 'string'
+          ? choice.delta.content
+          : typeof choice.text === 'string'
+            ? choice.text
+            : textContent(choice.delta?.content || choice.message?.content);
+        if (chunk) {
+          text += chunk;
+          if (typeof onChunk === 'function') onChunk(chunk, text);
+        }
+      };
 
       while (true) {
         const { done, value } = await reader.read();
@@ -218,21 +275,12 @@ class FreeLLMAPIProvider {
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
         for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data:')) continue;
-          const payload = trimmed.slice(5).trim();
-          if (payload === '[DONE]') continue;
-          try {
-            const event = JSON.parse(payload);
-            const chunk = event?.choices?.[0]?.delta?.content;
-            if (typeof chunk === 'string' && chunk) {
-              text += chunk;
-              if (typeof onChunk === 'function') onChunk(chunk, text);
-            }
-          } catch (_) {}
+          consumeLine(line);
         }
       }
-      return { text, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, isEstimated: true }, finishReason: 'stop', model: modelName, provider: this.providerId };
+      if (buffer.trim()) consumeLine(buffer);
+      if (hasToolCalls || unusableFinishReason(finishReason)) text = '';
+      return { text, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, isEstimated: true }, finishReason, model: modelName, provider: this.providerId };
     } catch (error) {
       if (error.name === 'AbortError') {
         const timeoutError = new Error(config.signal?.aborted ? 'Request was aborted by user' : 'FreeLLMAPI request timed out');
