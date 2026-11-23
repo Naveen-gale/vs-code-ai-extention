@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('crypto');
+
 /**
  * Intelligent Bounded In-Memory Suggestion Cache.
  * Stores inline suggestions with LRU eviction and TTL invalidation.
@@ -37,18 +39,34 @@ class SuggestionCache {
    * @param {string} params.language
    * @param {string} params.prefix
    * @param {string} params.suffix
+   * @param {object} [params.config]
    * @returns {string}
    */
-  static buildKey({ providerId = '', model = '', language = '', prefix = '', suffix = '' }) {
-    // Take the relevant context closest to the cursor:
-    // last 300 chars of prefix, first 100 chars of suffix
+  static buildKey({ providerId = '', model = '', language = '', prefix = '', suffix = '', config = {} }) {
     const normProv = (providerId || '').toLowerCase().trim();
     const normModel = (model || '').toLowerCase().trim();
     const normLang = (language || '').toLowerCase().trim();
-    const tailPrefix = prefix ? prefix.slice(-300) : '';
-    const headSuffix = suffix ? suffix.slice(0, 100) : '';
+    const normalize = value => {
+      if (Array.isArray(value)) return value.map(normalize);
+      if (value && typeof value === 'object') {
+        return Object.keys(value).sort().reduce((result, key) => {
+          result[key] = normalize(value[key]);
+          return result;
+        }, {});
+      }
+      return value;
+    };
+    const normalizedConfig = JSON.stringify(normalize(config || {}));
+    const digest = crypto.createHash('sha256')
+      .update('inline-v2\0')
+      .update(prefix || '')
+      .update('\0')
+      .update(suffix || '')
+      .update('\0')
+      .update(normalizedConfig)
+      .digest('hex');
 
-    return `${normProv}:${normModel}:${normLang}:${tailPrefix}@@@${headSuffix}`;
+    return `${normProv}:${normModel}:${normLang}:${digest}`;
   }
 
   /**

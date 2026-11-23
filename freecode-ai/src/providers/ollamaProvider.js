@@ -47,7 +47,9 @@ class OllamaProvider {
     try {
       data = await httpClient.request(url, {
         method: 'POST',
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: config.signal,
+        onResponseHeaders: config.onResponseHeaders
       }, timeout);
     } catch (err) {
       if (err.message && (err.message.includes('ECONNREFUSED') || err.message.includes('fetch failed'))) {

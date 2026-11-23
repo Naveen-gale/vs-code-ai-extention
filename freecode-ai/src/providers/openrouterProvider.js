@@ -50,7 +50,9 @@ class OpenRouterProvider {
         'HTTP-Referer': 'https://github.com/freecode-ai/freecode-ai',
         'X-Title': 'FreeCode AI VSCode Extension'
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: config.signal,
+      onResponseHeaders: config.onResponseHeaders
     }, config.timeoutMs || 50000);
 
     const choice = data?.choices?.[0];

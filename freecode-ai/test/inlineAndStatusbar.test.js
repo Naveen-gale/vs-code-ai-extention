@@ -180,11 +180,23 @@ class MockMemento {
 // Mock TextDocument helper
 function createMockDocument({ text, languageId = 'javascript', fileName = 'test.js' }) {
   const lines = text.split('\n');
+  const lineOffsets = [];
+  let offset = 0;
+  for (const line of lines) {
+    lineOffsets.push(offset);
+    offset += line.length + 1;
+  }
   return {
     languageId,
     fileName,
     uri: { toString: () => `file:///${fileName}` },
     lineCount: lines.length,
+    offsetAt: position => lineOffsets[position.line] + position.character,
+    positionAt: targetOffset => {
+      let line = 0;
+      while (line + 1 < lineOffsets.length && lineOffsets[line + 1] <= targetOffset) line++;
+      return new MockPosition(line, Math.min(lines[line].length, targetOffset - lineOffsets[line]));
+    },
     lineAt: (lineIndex) => {
       const lineText = lines[lineIndex] || '';
       return {

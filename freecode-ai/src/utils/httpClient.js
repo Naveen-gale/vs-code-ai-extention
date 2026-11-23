@@ -22,6 +22,8 @@ class HttpError extends Error {
 async function request(url, options = {}, timeoutMs = 30000) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const requestStartedAt = process.hrtime.bigint();
+  let onExternalAbort = null;
 
   // Link external signal to controller for immediate keystroke cancellation
   if (options.signal) {
@@ -29,10 +31,11 @@ async function request(url, options = {}, timeoutMs = 30000) {
       clearTimeout(timeoutId);
       controller.abort();
     } else {
-      options.signal.addEventListener('abort', () => {
+      onExternalAbort = () => {
         clearTimeout(timeoutId);
         controller.abort();
-      });
+      };
+      options.signal.addEventListener('abort', onExternalAbort, { once: true });
     }
   }
 
@@ -42,14 +45,17 @@ async function request(url, options = {}, timeoutMs = 30000) {
       'Content-Type': 'application/json',
       ...(options.headers || {})
     };
+    const { onResponseHeaders, ...fetchOptions } = options;
 
     const response = await fetch(url, {
-      ...options,
+      ...fetchOptions,
       headers,
       signal: controller.signal
     });
-
     clearTimeout(timeoutId);
+    if (typeof onResponseHeaders === 'function') {
+      onResponseHeaders(Number(process.hrtime.bigint() - requestStartedAt) / 1e6);
+    }
 
     const rawText = await response.text();
     let data;
@@ -92,6 +98,11 @@ async function request(url, options = {}, timeoutMs = 30000) {
       throw new HttpError(`Request timed out after ${timeoutMs}ms`, 408, null);
     }
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    if (options.signal && onExternalAbort) {
+      options.signal.removeEventListener('abort', onExternalAbort);
+    }
   }
 }
 

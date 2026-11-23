@@ -156,7 +156,8 @@ class FreeLLMAPIProvider {
         temperature: config.temperature !== undefined ? config.temperature : 0.1,
         max_tokens: config.maxTokens || 96
       }),
-      signal: config.signal
+      signal: config.signal,
+      onResponseHeaders: config.onResponseHeaders
     }, config.timeoutMs || 15000);
     const choice = Array.isArray(data?.choices) ? data.choices[0] : null;
     const finishReason = choice?.finish_reason || 'stop';

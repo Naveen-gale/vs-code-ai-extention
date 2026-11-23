@@ -49,7 +49,9 @@ class HuggingFaceProvider {
       headers: {
         Authorization: `Bearer ${this.apiKey}`
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: config.signal,
+      onResponseHeaders: config.onResponseHeaders
     }, config.timeoutMs || 45000);
 
     const choice = data?.choices?.[0];

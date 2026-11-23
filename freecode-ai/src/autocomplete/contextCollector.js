@@ -42,12 +42,13 @@ class ContextCollector {
     const linePrefix = currentLine.text.substring(0, position.character);
     const lineSuffix = currentLine.text.substring(position.character);
 
-    // Full text before and after cursor
-    const fullText = document.getText();
     const cursorOffset = document.offsetAt(position);
-
-    const rawPrefix = fullText.substring(Math.max(0, cursorOffset - prefixChars), cursorOffset);
-    const rawSuffix = fullText.substring(cursorOffset, Math.min(fullText.length, cursorOffset + suffixChars));
+    const lastLine = document.lineAt(document.lineCount - 1);
+    const documentEnd = document.offsetAt(new vscode.Position(document.lineCount - 1, lastLine.text.length));
+    const prefixStart = document.positionAt(Math.max(0, cursorOffset - prefixChars));
+    const suffixEnd = document.positionAt(Math.min(documentEnd, cursorOffset + suffixChars));
+    const rawPrefix = document.getText(new vscode.Range(prefixStart, position));
+    const rawSuffix = document.getText(new vscode.Range(position, suffixEnd));
 
     // Sanitize credentials
     const prefix = this.sanitizeContent(rawPrefix);

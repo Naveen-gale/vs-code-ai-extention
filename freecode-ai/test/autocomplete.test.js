@@ -20,6 +20,7 @@ const { SuggestionParser } = require('../src/autocomplete/suggestionParser');
 const { SuggestionCache } = require('../src/autocomplete/cacheManager');
 const { InlineQualityPipeline } = require('../src/autocomplete/qualityPipeline');
 const { LocalPredictionEngine } = require('../src/autocomplete/localPredictionEngine');
+const mockPosition = require('vscode').Position;
 
 async function run() {
   console.log('Running Autocomplete Unit Tests...');
@@ -55,6 +56,56 @@ async function run() {
   assert.ok(!sanitized.includes('sk-1234567890abcdef'));
   assert.ok(sanitized.includes('[REDACTED'));
 
+  const largeLines = Array.from({ length: 4000 }, (_, index) => `const value${index} = ${index};`);
+  const largeSource = largeLines.join('\n');
+  const largeOffsets = [];
+  let largeOffset = 0;
+  for (const line of largeLines) {
+    largeOffsets.push(largeOffset);
+    largeOffset += line.length + 1;
+  }
+  let unboundedReads = 0;
+  let boundedCharacters = 0;
+  const largeDocument = {
+    languageId: 'javascript',
+    fileName: 'large.js',
+    lineCount: largeLines.length,
+    lineAt: line => ({ text: largeLines[line] }),
+    offsetAt: position => largeOffsets[position.line] + position.character,
+    positionAt: offset => {
+      let low = 0;
+      let high = largeOffsets.length - 1;
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        if (largeOffsets[mid] <= offset) low = mid;
+        else high = mid - 1;
+      }
+      return new mockPosition(low, Math.min(largeLines[low].length, offset - largeOffsets[low]));
+    },
+    getText: range => {
+      if (!range) {
+        unboundedReads++;
+        return largeSource.split('').join('');
+      }
+      const start = largeOffsets[range.start.line] + range.start.character;
+      const end = largeOffsets[range.end.line] + range.end.character;
+      boundedCharacters += end - start;
+      return largeSource.slice(start, end);
+    }
+  };
+  const largeContext = ContextCollector.collectBounded(
+    largeDocument,
+    new mockPosition(2000, 10),
+    { maxInputTokens: 120 }
+  );
+  assert.strictEqual(unboundedReads, 0, 'Bounded collection must not read the entire document');
+  assert.ok(boundedCharacters <= 480, 'Only the requested context window should be read');
+  assert.ok(largeContext.prefix.length > 0);
+  console.log(
+    `[MOCK PERF] Context read ${boundedCharacters} of ${largeSource.length} document characters ` +
+    `(${Math.round((1 - boundedCharacters / largeSource.length) * 100)}% less than a full-document read)`
+  );
+
   // 5. SuggestionCache operations
   const cache = new SuggestionCache({ maxSize: 10, defaultTtlMs: 5000 });
   const key = SuggestionCache.buildKey({
@@ -70,6 +121,29 @@ async function run() {
   assert.strictEqual(val, ' 42;');
   assert.strictEqual(cache.stats.hits, 1);
   assert.strictEqual(cache.stats.requestsAvoided, 1);
+  assert.notStrictEqual(
+    key,
+    SuggestionCache.buildKey({
+      providerId: 'gemini',
+      model: 'gemini-1.5-flash',
+      language: 'javascript',
+      prefix: `${'x'.repeat(350)}const x =`,
+      suffix: ''
+    }),
+    'Different earlier context must not collide in the cache'
+  );
+  assert.notStrictEqual(
+    key,
+    SuggestionCache.buildKey({
+      providerId: 'gemini',
+      model: 'gemini-1.5-flash',
+      language: 'javascript',
+      prefix: 'const x =',
+      suffix: '',
+      config: { temperature: 0.4 }
+    }),
+    'Generation configuration must participate in the cache key'
+  );
 
   // 6. Gemini message formatting extracts system instruction and ensures alternating turns
   const { GeminiProvider } = require('../src/providers/geminiProvider');

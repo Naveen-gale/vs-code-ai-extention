@@ -143,8 +143,15 @@ class SmartQuotaManager {
       : null;
     const list = [];
 
+    const configs = typeof this.providerManager.getProviderConfigurations === 'function'
+      ? await this.providerManager.getProviderConfigurations(configured)
+      : new Map(await Promise.all(configured.map(async id => [
+        id,
+        await this.providerManager.getProviderConfiguration(id)
+      ])));
+
     for (const id of configured) {
-      const cfg = await this.providerManager.getProviderConfiguration(id);
+      const cfg = configs.get(id);
       const meta = PROVIDER_METADATA[id] || { id, name: id, defaultModel: 'default' };
       const priority = typeof cfg.priority === 'number'
         ? cfg.priority
@@ -153,6 +160,8 @@ class SmartQuotaManager {
         id,
         name: meta.name || id,
         model: cfg.model || meta.defaultModel,
+        endpoint: cfg.endpoint || null,
+        selectionMode: cfg.selectionMode,
         priority,
         isLocal: id === PROVIDERS.OLLAMA
       });
@@ -223,11 +232,15 @@ class SmartQuotaManager {
     }
 
     // Iterate through cloud providers strictly in user priority order
-    for (const candidate of ordered) {
-      if (candidate.id === PROVIDERS.OLLAMA) continue; // Skip local provider in cloud pass
+    const cloudCandidates = ordered.filter(candidate => candidate.id !== PROVIDERS.OLLAMA);
+    const apiKeys = new Map(await Promise.all(cloudCandidates.map(async candidate => [
+      candidate.id,
+      await this.secretManager.getApiKey(candidate.id)
+    ])));
 
+    for (const candidate of cloudCandidates) {
       // A. Check API Key presence in SecretStorage (Preserve key at all times)
-      const apiKey = await this.secretManager.getApiKey(candidate.id);
+      const apiKey = apiKeys.get(candidate.id);
       if (!apiKey || apiKey.trim().length === 0) {
         continue; // Unconfigured provider, skip to next in priority
       }
@@ -256,8 +269,7 @@ class SmartQuotaManager {
       // Candidate meets all eligibility criteria and is highest in user priority!
       this._log(`${candidate.name} selected according to user priority #${candidate.priority}.`);
       if (candidate.id === PROVIDERS.FREELLMAPI) {
-        const freeConfig = await this.providerManager.getProviderConfiguration(PROVIDERS.FREELLMAPI);
-        if (freeConfig.selectionMode !== 'manual') {
+        if (candidate.selectionMode !== 'manual') {
           candidate.model = 'auto:fast';
           this._log('FreeLLMAPI inline completion using automatic fast routing.');
         }
@@ -285,18 +297,11 @@ class SmartQuotaManager {
    * @param {string} documentUri
    * @returns {AbortController}
    */
-  beginRequest(documentUri) {
+  beginRequest(documentUri, metadata = {}) {
     if (!documentUri) return new AbortController();
 
     // Cancel existing pending request for this document
-    if (this._activeRequests.has(documentUri)) {
-      const prev = this._activeRequests.get(documentUri);
-      try {
-        prev.controller.abort();
-        this._log(`Cancelled previous in-flight request for ${documentUri.slice(-25)}`);
-      } catch (_) {}
-      this._activeRequests.delete(documentUri);
-    }
+    this.cancelRequest(documentUri);
 
     // Enforce max concurrent global requests
     if (this._activeRequests.size >= this.maxConcurrent) {
@@ -311,18 +316,37 @@ class SmartQuotaManager {
     const controller = new AbortController();
     this._activeRequests.set(documentUri, {
       controller,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      ...metadata
     });
 
     return controller;
   }
 
   /**
+   * Aborts the active request for a document without starting a replacement.
+   * @param {string} documentUri
+   * @returns {boolean}
+   */
+  cancelRequest(documentUri) {
+    const active = documentUri && this._activeRequests.get(documentUri);
+    if (!active) return false;
+    try {
+      active.controller.abort();
+      this._log(`Cancelled previous in-flight request for ${documentUri.slice(-25)}`);
+    } finally {
+      this._activeRequests.delete(documentUri);
+    }
+    return true;
+  }
+
+  /**
    * Removes in-flight request tracking upon completion or error.
    * @param {string} documentUri
    */
-  endRequest(documentUri) {
-    if (documentUri && this._activeRequests.has(documentUri)) {
+  endRequest(documentUri, controller) {
+    const active = documentUri && this._activeRequests.get(documentUri);
+    if (active && (!controller || active.controller === controller)) {
       this._activeRequests.delete(documentUri);
     }
   }
@@ -540,7 +564,10 @@ class SmartQuotaManager {
       },
       cache: cacheMetrics,
       requestsAvoided: cacheMetrics.requestsAvoided,
-      tokensSaved: cacheMetrics.tokensSaved
+      tokensSaved: cacheMetrics.tokensSaved,
+      inlinePerformance: this.inlineProvider
+        ? this.inlineProvider.getPerformanceMetrics()
+        : null
     };
   }
 

@@ -132,6 +132,23 @@ class UsageDisplay {
       lines.push(`**Completion Mode:** \`${modeLabel}\``);
       lines.push(usageLine);
 
+      const performance = d.inlinePerformance;
+      const providerPerformance = performance && performance.providers
+        ? performance.providers[activeProvider]
+        : null;
+      if (providerPerformance) {
+        const timings = providerPerformance.timings || {};
+        const generation = timings.generationMs ? `${timings.generationMs.averageMs} ms` : 'n/a';
+        const headers = timings.responseHeadersMs ? `${timings.responseHeadersMs.averageMs} ms` : 'n/a';
+        const total = timings.totalLatencyMs ? `${timings.totalLatencyMs.averageMs} ms` : 'n/a';
+        const context = performance.contextTimings.contextPreparationMs
+          ? `${performance.contextTimings.contextPreparationMs.averageMs} ms`
+          : 'n/a';
+        const debounce = timings.debounceMs ? `${timings.debounceMs.averageMs} ms` : 'n/a';
+        lines.push(`**Inline Performance (${activeProvider}):** headers ${headers} • generation ${generation} • total ${total} • context ${context} • debounce ${debounce}`);
+        lines.push(`**Inline Errors:** ${providerPerformance.providerErrors || 0} • **Rate limits:** ${providerPerformance.rateLimits || 0} • **Cancellations:** ${performance.cancellations}`);
+      }
+
       if (d.cache) {
         lines.push(`---`);
         lines.push(`**Cache Hit Rate:** ${d.cache.hitRatePercent}% (${d.cache.hits} hits / ${d.cache.hits + d.cache.misses} total)`);

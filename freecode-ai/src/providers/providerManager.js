@@ -152,22 +152,17 @@ class ProviderManager {
    * @returns {Promise<Array<string>>}
    */
   async getConfiguredProviders() {
-    const list = [];
     const config = this._loadConfig();
-    for (const id of Object.values(PROVIDERS)) {
+    const ids = Object.values(PROVIDERS);
+    const configured = await Promise.all(ids.map(async id => {
       const meta = PROVIDER_METADATA[id];
       if (meta.requiresApiKey) {
-        if (this.secretManager && (await this.secretManager.hasApiKey(id))) {
-          list.push(id);
-        }
-      } else {
-        // Local provider like Ollama: only considered configured if user explicitly saved config/endpoint
-        if (config[id] && (config[id].configured || config[id].endpoint || config[id].model)) {
-          list.push(id);
-        }
+        return Boolean(this.secretManager && await this.secretManager.hasApiKey(id));
       }
-    }
-    return list;
+      // Local provider like Ollama: only considered configured if user explicitly saved config/endpoint
+      return Boolean(config[id] && (config[id].configured || config[id].endpoint || config[id].model));
+    }));
+    return ids.filter((id, index) => configured[index]);
   }
 
   /**
@@ -266,7 +261,23 @@ class ProviderManager {
    * @returns {Promise<object>}
    */
   async getProviderConfiguration(providerId) {
+    return this._formatProviderConfiguration(providerId, this._loadConfig());
+  }
+
+  /**
+   * Reads configurations for a provider list with one storage load.
+   * @param {string[]} providerIds
+   * @returns {Promise<Map<string, object>>}
+   */
+  async getProviderConfigurations(providerIds) {
     const config = this._loadConfig();
+    return new Map(providerIds.map(id => [
+      id,
+      this._formatProviderConfiguration(id, config)
+    ]));
+  }
+
+  _formatProviderConfiguration(providerId, config) {
     const meta = PROVIDER_METADATA[providerId] || {};
     const stored = config[providerId] || {};
     return {

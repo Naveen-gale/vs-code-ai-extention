@@ -103,6 +103,7 @@ const mockVscode = {
       this.command = null;
     }
   },
+  InlineCompletionTriggerKind: { Automatic: 0, Invoke: 1 },
   MarkdownString: class {
     constructor(val) { this.value = val; this.isTrusted = false; }
   },
@@ -353,9 +354,13 @@ class MockMemento {
       uri: { toString: () => docKey },
       languageId: 'javascript',
       fileName: 'test.js',
+      lineCount: 1,
       lineAt: () => ({ text: 'const a = ' }),
-      getText: () => 'const a = ',
-      offsetAt: () => 10
+      getText: range => range
+        ? 'const a = '.slice(range.start.character, range.end.character)
+        : 'const a = ',
+      offsetAt: position => position.character,
+      positionAt: offset => new mockVscode.Position(0, offset)
     };
 
     // Simulate keypress 1
@@ -455,6 +460,9 @@ class MockMemento {
           const current = cases[responseIndex++];
           assert.ok(requestConfig.inlinePrompt.includes(`Language: ${current.language}`));
           assert.ok(requestConfig.inlinePrompt.includes('<CURSOR>'));
+          assert.ok(requestConfig.maxTokens <= 64);
+          assert.ok(requestConfig.signal);
+          requestConfig.onResponseHeaders(3);
           return { text: current.response, finishReason: 'stop', usage: {} };
         }
       };
@@ -474,8 +482,21 @@ class MockMemento {
         languageId: testCase.language,
         lineCount: lines.length,
         lineAt: line => ({ text: lines[line] }),
-        getText: () => testCase.source,
-        offsetAt: position => lineOffsets[position.line] + position.character
+        getText: range => range
+          ? testCase.source.slice(
+            lineOffsets[range.start.line] + range.start.character,
+            lineOffsets[range.end.line] + range.end.character
+          )
+          : testCase.source,
+        offsetAt: position => lineOffsets[position.line] + position.character,
+        positionAt: targetOffset => {
+          let line = 0;
+          while (line + 1 < lineOffsets.length && lineOffsets[line + 1] <= targetOffset) line++;
+          return new mockVscode.Position(
+            line,
+            Math.min(lines[line].length, targetOffset - lineOffsets[line])
+          );
+        }
       };
     };
 
@@ -512,9 +533,232 @@ class MockMemento {
         assert.strictEqual(insertedDocument, current.expectedDocument);
       }
       assert.strictEqual(responseIndex, cases.length);
+      const performance = inlineProvider.getPerformanceMetrics();
+      assert.strictEqual(performance.providers[PROVIDERS.FREELLMAPI].requests, cases.length);
+      assert.ok(performance.providers[PROVIDERS.FREELLMAPI].timings.generationMs.count >= cases.length);
+      assert.ok(performance.contextTimings.contextPreparationMs.count >= cases.length);
+      assert.strictEqual(performance.providers[PROVIDERS.FREELLMAPI].timeToFirstTokenMs, null);
     } finally {
       ProviderFactory.create = originalCreate;
       configStore.set('laven.inline.completionMode', 'hybrid');
+    }
+  });
+
+  await test('Inline pipeline uses abortable bounded requests across every provider adapter', async () => {
+    const h = createTestHarness();
+    const providerIds = Object.values(PROVIDERS);
+    h.quotaManager.getConfig = (key, fallback) => {
+      if (key === 'debounceMs') return 150;
+      if (key === 'maxInputTokens') return 1500;
+      if (key === 'maxOutputTokens') return 48;
+      return fallback;
+    };
+    h.secretManager.getApiKey = async () => 'mock-provider-key';
+    h.quotaManager.selectProviderForInline = async ({ documentUri }) => {
+      const providerId = documentUri.split('/').pop();
+      await new Promise(resolve => setTimeout(resolve, 10));
+      return {
+        providerId,
+        model: 'mock-model',
+        isLocal: providerId === PROVIDERS.OLLAMA,
+        provider: { endpoint: 'http://127.0.0.1:31415/v1' }
+      };
+    };
+
+    const { ProviderFactory } = require('../src/providers/providerFactory');
+    const originalCreate = ProviderFactory.create;
+    ProviderFactory.create = providerId => ({
+      completeInline: async (prefix, suffix, requestConfig) => {
+        assert.ok(requestConfig.signal);
+        requestConfig.onResponseHeaders(3);
+        await new Promise(resolve => setTimeout(resolve, 12));
+        return { text: 'return 42;', finishReason: 'stop', usage: {} };
+      },
+      complete: async (messages, requestConfig) => {
+        assert.ok(requestConfig.signal, `${providerId} must receive request cancellation`);
+        assert.strictEqual(requestConfig.systemPrompt, undefined);
+        assert.strictEqual(messages.filter(message => message.role === 'system').length, 1);
+        requestConfig.onResponseHeaders(3);
+        await new Promise(resolve => setTimeout(resolve, 12));
+        return { text: 'return 42;', finishReason: 'stop', usage: {} };
+      }
+    });
+
+    const source = 'function compute() {\n    \n}';
+    const lines = source.split('\n');
+    const offsets = [0, lines[0].length + 1, lines[0].length + lines[1].length + 2];
+    const document = providerId => ({
+      uri: { toString: () => `file:///mock/${providerId}` },
+      fileName: 'mock.js',
+      languageId: 'javascript',
+      lineCount: lines.length,
+      lineAt: line => ({ text: lines[line] }),
+      offsetAt: position => offsets[position.line] + position.character,
+      positionAt: offset => {
+        let line = 0;
+        while (line + 1 < offsets.length && offsets[line + 1] <= offset) line++;
+        return new mockVscode.Position(line, Math.min(lines[line].length, offset - offsets[line]));
+      },
+      getText: range => range
+        ? source.slice(offsets[range.start.line] + range.start.character, offsets[range.end.line] + range.end.character)
+        : source
+    });
+
+    try {
+      const provider = new LavenInlineCompletionProvider({
+        quotaManager: h.quotaManager,
+        secretManager: h.secretManager,
+        providerManager: h.providerManager
+      });
+      for (const providerId of providerIds) {
+        const baselineStartedAt = process.hrtime.bigint();
+        await new Promise(resolve => setTimeout(resolve, 10));
+        await new Promise(resolve => setTimeout(resolve, 250));
+        await new Promise(resolve => setTimeout(resolve, 12));
+        const legacySerializedMs = Number(process.hrtime.bigint() - baselineStartedAt) / 1e6;
+
+        const optimizedStartedAt = process.hrtime.bigint();
+        const items = await provider.provideInlineCompletionItems(
+          document(providerId),
+          new mockVscode.Position(1, 4),
+          {},
+          { isCancellationRequested: false }
+        );
+        const optimizedPipelineMs = Number(process.hrtime.bigint() - optimizedStartedAt) / 1e6;
+        assert.strictEqual(items.length, 1, `${providerId} should produce a mock completion`);
+        assert.strictEqual(items[0].insertText, 'return 42;');
+        assert.ok(
+          optimizedPipelineMs < legacySerializedMs * 0.8,
+          `${providerId} should hide provider selection inside the shorter debounce`
+        );
+        const improvementPercent = Math.round((1 - optimizedPipelineMs / legacySerializedMs) * 100);
+        console.log(
+          `[MOCK PERF] ${providerId}: legacy serialized ${legacySerializedMs.toFixed(1)} ms -> ` +
+          `optimized pipeline ${optimizedPipelineMs.toFixed(1)} ms (${improvementPercent}% lower); ` +
+          `provider delay fixed at 12 ms`
+        );
+      }
+
+      const metrics = provider.getPerformanceMetrics();
+      for (const providerId of providerIds) {
+        const providerMetrics = metrics.providers[providerId];
+        assert.strictEqual(providerMetrics.requests, 1, `${providerId} should be measured`);
+        assert.strictEqual(providerMetrics.timings.generationMs.count, 1);
+        assert.strictEqual(providerMetrics.timings.responseHeadersMs.averageMs, 3);
+        assert.ok(providerMetrics.timings.generationMs.averageMs >= 10);
+      }
+    } finally {
+      ProviderFactory.create = originalCreate;
+    }
+  });
+
+  await test('Adaptive debounce targets short pauses and accelerates useful boundaries', () => {
+    const h = createTestHarness();
+    h.quotaManager.getConfig = (key, fallback) => key === 'debounceMs' ? 150 : fallback;
+    const provider = new LavenInlineCompletionProvider({
+      quotaManager: h.quotaManager,
+      secretManager: h.secretManager,
+      providerManager: h.providerManager
+    });
+
+    assert.strictEqual(provider._getAdaptiveDebounceMs({
+      linePrefix: 'const value = x',
+      prefix: 'const value = x'
+    }, { triggerKind: 0 }, []), 150);
+    assert.strictEqual(provider._getAdaptiveDebounceMs({
+      linePrefix: 'const value = x',
+      prefix: 'const value = x'
+    }, { triggerKind: 0 }, [50, 70]), 180);
+    assert.strictEqual(provider._getAdaptiveDebounceMs({
+      linePrefix: 'const value = ',
+      prefix: 'const value = '
+    }, { triggerKind: 0 }, []), 100);
+    assert.strictEqual(provider._getAdaptiveDebounceMs({
+      linePrefix: 'const value = x',
+      prefix: 'const value = x'
+    }, { triggerKind: 1 }, []), 0);
+  });
+
+  await test('A newer inline request immediately aborts the older provider call', async () => {
+    const h = createTestHarness();
+    h.quotaManager.getConfig = (key, fallback) => {
+      if (key === 'debounceMs') return 0;
+      if (key === 'maxInputTokens') return 1500;
+      if (key === 'maxOutputTokens') return 48;
+      return fallback;
+    };
+    h.secretManager.getApiKey = async () => 'mock-provider-key';
+    h.quotaManager.selectProviderForInline = async () => ({
+      providerId: PROVIDERS.FREELLMAPI,
+      model: 'auto:fast',
+      isLocal: false,
+      provider: { endpoint: 'http://127.0.0.1:31415/v1' }
+    });
+
+    const { ProviderFactory } = require('../src/providers/providerFactory');
+    const originalCreate = ProviderFactory.create;
+    let requestCount = 0;
+    let resolveStarted;
+    const firstStarted = new Promise(resolve => { resolveStarted = resolve; });
+    let firstSignal;
+    ProviderFactory.create = () => ({
+      completeInline: (prefix, suffix, config) => {
+        requestCount++;
+        if (requestCount === 1) {
+          firstSignal = config.signal;
+          resolveStarted();
+          return new Promise(resolve => {
+            config.signal.addEventListener('abort', () => resolve({
+              text: '',
+              finishReason: 'stop',
+              usage: {}
+            }), { once: true });
+          });
+        }
+        return Promise.resolve({ text: 'return 42;', finishReason: 'stop', usage: {} });
+      }
+    });
+
+    const source = 'function compute() {\n    \n}';
+    const lines = source.split('\n');
+    const offsets = [0, lines[0].length + 1, lines[0].length + lines[1].length + 2];
+    const document = {
+      uri: { toString: () => 'file:///rapid-typing.js' },
+      fileName: 'rapid-typing.js',
+      languageId: 'javascript',
+      lineCount: lines.length,
+      lineAt: line => ({ text: lines[line] }),
+      offsetAt: position => offsets[position.line] + position.character,
+      positionAt: offset => {
+        let line = 0;
+        while (line + 1 < offsets.length && offsets[line + 1] <= offset) line++;
+        return new mockVscode.Position(line, Math.min(lines[line].length, offset - offsets[line]));
+      },
+      getText: range => range
+        ? source.slice(offsets[range.start.line] + range.start.character, offsets[range.end.line] + range.end.character)
+        : source
+    };
+
+    try {
+      const provider = new LavenInlineCompletionProvider({
+        quotaManager: h.quotaManager,
+        secretManager: h.secretManager,
+        providerManager: h.providerManager
+      });
+      const position = new mockVscode.Position(1, 4);
+      const token = { isCancellationRequested: false };
+      const firstPromise = provider.provideInlineCompletionItems(document, position, {}, token);
+      await firstStarted;
+      const secondPromise = provider.provideInlineCompletionItems(document, position, {}, token);
+      const [first, second] = await Promise.all([firstPromise, secondPromise]);
+
+      assert.strictEqual(firstSignal.aborted, true);
+      assert.deepStrictEqual(first, []);
+      assert.strictEqual(second.length, 1);
+      assert.strictEqual(second[0].insertText, 'return 42;');
+      assert.strictEqual(provider.getPerformanceMetrics().cancellations, 1);
+    } finally {
+      ProviderFactory.create = originalCreate;
     }
   });
 
@@ -530,7 +774,13 @@ class MockMemento {
     assert.strictEqual(c1.signal.aborted, true, 'First request must be aborted');
     assert.strictEqual(c2.signal.aborted, false, 'Second request remains active');
 
-    h.quotaManager.endRequest(doc);
+    h.quotaManager.endRequest(doc, c1);
+    assert.strictEqual(
+      h.quotaManager.cancelRequest(doc),
+      true,
+      'Finishing an older request must not remove the newer in-flight request'
+    );
+    assert.strictEqual(c2.signal.aborted, true, 'A replacement request can be cancelled directly');
   });
 
   // 14. Stale responses are ignored

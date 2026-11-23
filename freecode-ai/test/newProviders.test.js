@@ -172,6 +172,128 @@ async function run() {
     assert.strictEqual(mistral.apiKey, 'test-mistral-key');
   });
 
+  await test('Ollama forwards the inline AbortSignal to the HTTP request', async () => {
+    const originalRequest = httpClient.request;
+    const controller = new AbortController();
+    const onResponseHeaders = () => {};
+    let forwardedSignal;
+    let forwardedHeadersCallback;
+    httpClient.request = async (url, options) => {
+      forwardedSignal = options.signal;
+      forwardedHeadersCallback = options.onResponseHeaders;
+      return { message: { content: 'return 1;' }, done: true };
+    };
+    try {
+      const ollama = ProviderFactory.create(PROVIDERS.OLLAMA, {
+        endpoint: 'http://127.0.0.1:11434',
+        model: 'qwen2.5-coder:1.5b'
+      });
+      await ollama.complete([{ role: 'user', content: 'return a value' }], {
+        signal: controller.signal,
+        onResponseHeaders,
+        maxTokens: 48
+      });
+      assert.strictEqual(forwardedSignal, controller.signal);
+      assert.strictEqual(forwardedHeadersCallback, onResponseHeaders);
+    } finally {
+      httpClient.request = originalRequest;
+    }
+  });
+
+  await test('HTTP client reports response-header latency without passing instrumentation to fetch', async () => {
+    const originalFetch = global.fetch;
+    let responseHeadersMs = null;
+    global.fetch = async (url, options) => {
+      assert.strictEqual(Object.prototype.hasOwnProperty.call(options, 'onResponseHeaders'), false);
+      return {
+        ok: true,
+        headers: {},
+        text: async () => '{}'
+      };
+    };
+    try {
+      await httpClient.request('http://127.0.0.1/mock', {
+        onResponseHeaders: elapsedMs => { responseHeadersMs = elapsedMs; }
+      });
+      assert.ok(Number.isFinite(responseHeadersMs) && responseHeadersMs >= 0);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  await test('Every inline provider adapter forwards cancellation and response-header measurements', async () => {
+    const originalFetch = global.fetch;
+    let responseHeaderCalls = 0;
+    const onResponseHeaders = () => { responseHeaderCalls++; };
+    const providerIds = Object.values(PROVIDERS);
+
+    const runCompletion = (providerId, provider, signal) => providerId === PROVIDERS.FREELLMAPI
+      ? provider.completeInline('const value = ', '', {
+        model: 'mock-model',
+        inlinePrompt: 'Return only code.',
+        signal,
+        onResponseHeaders,
+        timeoutMs: 1000
+      })
+      : provider.complete([{ role: 'user', content: 'Return a value.' }], {
+        model: 'mock-model',
+        signal,
+        onResponseHeaders,
+        timeoutMs: 1000
+      });
+
+    try {
+      global.fetch = async () => ({
+        ok: true,
+        headers: {},
+        text: async () => JSON.stringify({
+          choices: [{ message: { content: 'mock completion' } }]
+        })
+      });
+
+      for (const providerId of providerIds) {
+        const provider = ProviderFactory.create(providerId, {
+          apiKey: 'mock-provider-key',
+          model: 'mock-model',
+          endpoint: providerId === PROVIDERS.OLLAMA
+            ? 'http://127.0.0.1:11434'
+            : 'http://127.0.0.1:31415/v1'
+        });
+        await runCompletion(providerId, provider, new AbortController().signal);
+      }
+      assert.strictEqual(responseHeaderCalls, providerIds.length);
+
+      for (const providerId of providerIds) {
+        const provider = ProviderFactory.create(providerId, {
+          apiKey: 'mock-provider-key',
+          model: 'mock-model',
+          endpoint: providerId === PROVIDERS.OLLAMA
+            ? 'http://127.0.0.1:11434'
+            : 'http://127.0.0.1:31415/v1'
+        });
+        const controller = new AbortController();
+        let fetchSignal;
+        global.fetch = (url, options) => {
+          fetchSignal = options.signal;
+          return new Promise((resolve, reject) => {
+            options.signal.addEventListener('abort', () => {
+              const error = new Error('mock fetch aborted');
+              error.name = 'AbortError';
+              reject(error);
+            }, { once: true });
+          });
+        };
+        const pending = runCompletion(providerId, provider, controller.signal);
+        await new Promise(resolve => setImmediate(resolve));
+        controller.abort();
+        await assert.rejects(pending, undefined, `${providerId} should propagate cancellation`);
+        assert.ok(fetchSignal && fetchSignal.aborted, `${providerId} must abort the underlying fetch`);
+      }
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   // TEST 4: Cloudflare endpoint / URL formatting logic
   await test('TEST 4: Cloudflare Workers AI routes URLs for account ID, custom worker, and default gateway', () => {
     const cf1 = ProviderFactory.create(PROVIDERS.CLOUDFLARE, { apiKey: 'token', endpoint: '0123456789abcdef0123456789abcdef' });
