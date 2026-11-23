@@ -111,7 +111,11 @@ class FreeLLMAPIProvider {
         stream: false,
         temperature: config.temperature !== undefined ? config.temperature : 0.7,
         max_tokens: config.maxTokens || 2048
-      })
+      }),
+      signal: config.signal,
+      onResponseHeaders: config.onResponseHeaders,
+      onResponseParsed: config.onResponseParsed,
+      maxResponseBytes: config.maxResponseBytes
     }, config.timeoutMs || 45000);
 
     const choice = Array.isArray(data?.choices) ? data.choices[0] : null;
@@ -157,7 +161,9 @@ class FreeLLMAPIProvider {
         max_tokens: config.maxTokens || 96
       }),
       signal: config.signal,
-      onResponseHeaders: config.onResponseHeaders
+      onResponseHeaders: config.onResponseHeaders,
+      onResponseParsed: config.onResponseParsed,
+      maxResponseBytes: config.maxResponseBytes
     }, config.timeoutMs || 15000);
     const choice = Array.isArray(data?.choices) ? data.choices[0] : null;
     const finishReason = choice?.finish_reason || 'stop';
@@ -188,7 +194,8 @@ class FreeLLMAPIProvider {
       ...config,
       maxTokens: config.maxTokens || 64,
       temperature: 0.1,
-      timeoutMs: config.timeoutMs || 6000
+      timeoutMs: config.timeoutMs || 6000,
+      maxResponseBytes: config.maxResponseBytes || 64 * 1024
     });
   }
 
@@ -206,9 +213,14 @@ class FreeLLMAPIProvider {
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs || 45000);
+    const requestStartedAt = process.hrtime.bigint();
+    let onExternalAbort = null;
     if (config.signal) {
       if (config.signal.aborted) controller.abort();
-      else config.signal.addEventListener('abort', () => controller.abort(), { once: true });
+      else {
+        onExternalAbort = () => controller.abort();
+        config.signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
     }
 
     try {
@@ -224,6 +236,9 @@ class FreeLLMAPIProvider {
         }),
         signal: controller.signal
       });
+      if (typeof config.onResponseHeaders === 'function') {
+        config.onResponseHeaders(Number(process.hrtime.bigint() - requestStartedAt) / 1e6);
+      }
       if (!response.ok) {
         let data = null;
         try { data = await response.json(); } catch (_) {}
@@ -241,6 +256,11 @@ class FreeLLMAPIProvider {
       let text = '';
       let finishReason = 'stop';
       let hasToolCalls = false;
+      let responseBytes = 0;
+      let firstTokenReported = false;
+      const maxResponseBytes = Number.isFinite(config.maxResponseBytes) && config.maxResponseBytes > 0
+        ? Math.floor(config.maxResponseBytes)
+        : 1024 * 1024;
 
       const consumeLine = line => {
         const trimmed = line.trim();
@@ -265,6 +285,10 @@ class FreeLLMAPIProvider {
             : textContent(choice.delta?.content || choice.message?.content);
         if (chunk) {
           text += chunk;
+          if (!firstTokenReported && typeof config.onFirstToken === 'function') {
+            firstTokenReported = true;
+            config.onFirstToken(Number(process.hrtime.bigint() - requestStartedAt) / 1e6);
+          }
           if (typeof onChunk === 'function') onChunk(chunk, text);
         }
       };
@@ -272,6 +296,15 @@ class FreeLLMAPIProvider {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        responseBytes += value.byteLength;
+        if (responseBytes > maxResponseBytes) {
+          try {
+            await reader.cancel();
+          } catch (_) {}
+          const error = new Error(`FreeLLMAPI response exceeded the ${maxResponseBytes}-byte limit.`);
+          error.status = 413;
+          throw error;
+        }
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
@@ -291,6 +324,9 @@ class FreeLLMAPIProvider {
       throw error;
     } finally {
       clearTimeout(timeoutId);
+      if (config.signal && onExternalAbort) {
+        config.signal.removeEventListener('abort', onExternalAbort);
+      }
     }
   }
 }

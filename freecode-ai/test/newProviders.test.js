@@ -203,8 +203,11 @@ async function run() {
   await test('HTTP client reports response-header latency without passing instrumentation to fetch', async () => {
     const originalFetch = global.fetch;
     let responseHeadersMs = null;
+    let responseParsedMs = null;
     global.fetch = async (url, options) => {
       assert.strictEqual(Object.prototype.hasOwnProperty.call(options, 'onResponseHeaders'), false);
+      assert.strictEqual(Object.prototype.hasOwnProperty.call(options, 'onResponseParsed'), false);
+      assert.strictEqual(Object.prototype.hasOwnProperty.call(options, 'maxResponseBytes'), false);
       return {
         ok: true,
         headers: {},
@@ -213,9 +216,49 @@ async function run() {
     };
     try {
       await httpClient.request('http://127.0.0.1/mock', {
-        onResponseHeaders: elapsedMs => { responseHeadersMs = elapsedMs; }
+        onResponseHeaders: elapsedMs => { responseHeadersMs = elapsedMs; },
+        onResponseParsed: elapsedMs => { responseParsedMs = elapsedMs; }
       });
       assert.ok(Number.isFinite(responseHeadersMs) && responseHeadersMs >= 0);
+      assert.ok(Number.isFinite(responseParsedMs) && responseParsedMs >= 0);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  await test('HTTP client bounds response bytes and keeps the timeout active while reading the body', async () => {
+    const originalFetch = global.fetch;
+    try {
+      global.fetch = async () => ({
+        ok: true,
+        headers: { get: () => '8' },
+        text: async () => '12345678'
+      });
+      await assert.rejects(
+        httpClient.request('http://127.0.0.1/large', { maxResponseBytes: 4 }),
+        /4-byte limit/
+      );
+
+      global.fetch = async (url, options) => ({
+        ok: true,
+        headers: {},
+        body: {
+          getReader: () => ({
+            read: () => new Promise((resolve, reject) => {
+              options.signal.addEventListener('abort', () => {
+                const error = new Error('aborted while reading body');
+                error.name = 'AbortError';
+                reject(error);
+              }, { once: true });
+            }),
+            releaseLock: () => {}
+          })
+        }
+      });
+      await assert.rejects(
+        httpClient.request('http://127.0.0.1/stalled', {}, 10),
+        error => error.status === 408
+      );
     } finally {
       global.fetch = originalFetch;
     }
@@ -224,7 +267,9 @@ async function run() {
   await test('Every inline provider adapter forwards cancellation and response-header measurements', async () => {
     const originalFetch = global.fetch;
     let responseHeaderCalls = 0;
+    let responseParsedCalls = 0;
     const onResponseHeaders = () => { responseHeaderCalls++; };
+    const onResponseParsed = () => { responseParsedCalls++; };
     const providerIds = Object.values(PROVIDERS);
 
     const runCompletion = (providerId, provider, signal) => providerId === PROVIDERS.FREELLMAPI
@@ -233,12 +278,16 @@ async function run() {
         inlinePrompt: 'Return only code.',
         signal,
         onResponseHeaders,
+        onResponseParsed,
+        maxResponseBytes: 64 * 1024,
         timeoutMs: 1000
       })
       : provider.complete([{ role: 'user', content: 'Return a value.' }], {
         model: 'mock-model',
         signal,
         onResponseHeaders,
+        onResponseParsed,
+        maxResponseBytes: 64 * 1024,
         timeoutMs: 1000
       });
 
@@ -262,6 +311,27 @@ async function run() {
         await runCompletion(providerId, provider, new AbortController().signal);
       }
       assert.strictEqual(responseHeaderCalls, providerIds.length);
+      assert.strictEqual(responseParsedCalls, providerIds.length);
+
+      global.fetch = async () => ({
+        ok: true,
+        headers: { get: () => String(64 * 1024 + 1) },
+        text: async () => ''
+      });
+      for (const providerId of providerIds) {
+        const provider = ProviderFactory.create(providerId, {
+          apiKey: 'mock-provider-key',
+          model: 'mock-model',
+          endpoint: providerId === PROVIDERS.OLLAMA
+            ? 'http://127.0.0.1:11434'
+            : 'http://127.0.0.1:31415/v1'
+        });
+        await assert.rejects(
+          runCompletion(providerId, provider, new AbortController().signal),
+          undefined,
+          `${providerId} must enforce the inline response size limit`
+        );
+      }
 
       for (const providerId of providerIds) {
         const provider = ProviderFactory.create(providerId, {

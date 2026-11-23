@@ -49,7 +49,9 @@ class OllamaProvider {
         method: 'POST',
         body: JSON.stringify(body),
         signal: config.signal,
-        onResponseHeaders: config.onResponseHeaders
+        onResponseHeaders: config.onResponseHeaders,
+        onResponseParsed: config.onResponseParsed,
+        maxResponseBytes: config.maxResponseBytes
       }, timeout);
     } catch (err) {
       if (err.message && (err.message.includes('ECONNREFUSED') || err.message.includes('fetch failed'))) {

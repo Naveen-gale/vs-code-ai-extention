@@ -60,7 +60,9 @@ class OpenAIProvider {
       },
       body: JSON.stringify(body),
       signal: config.signal,
-      onResponseHeaders: config.onResponseHeaders
+      onResponseHeaders: config.onResponseHeaders,
+      onResponseParsed: config.onResponseParsed,
+      maxResponseBytes: config.maxResponseBytes
     }, config.timeoutMs || 45000);
 
     const choice = data?.choices?.[0];

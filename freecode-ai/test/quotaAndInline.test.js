@@ -611,11 +611,11 @@ class MockMemento {
         providerManager: h.providerManager
       });
       for (const providerId of providerIds) {
-        const baselineStartedAt = process.hrtime.bigint();
+        const referenceStartedAt = process.hrtime.bigint();
         await new Promise(resolve => setTimeout(resolve, 10));
         await new Promise(resolve => setTimeout(resolve, 250));
         await new Promise(resolve => setTimeout(resolve, 12));
-        const legacySerializedMs = Number(process.hrtime.bigint() - baselineStartedAt) / 1e6;
+        const serializedReferenceMs = Number(process.hrtime.bigint() - referenceStartedAt) / 1e6;
 
         const optimizedStartedAt = process.hrtime.bigint();
         const items = await provider.provideInlineCompletionItems(
@@ -628,14 +628,13 @@ class MockMemento {
         assert.strictEqual(items.length, 1, `${providerId} should produce a mock completion`);
         assert.strictEqual(items[0].insertText, 'return 42;');
         assert.ok(
-          optimizedPipelineMs < legacySerializedMs * 0.8,
-          `${providerId} should hide provider selection inside the shorter debounce`
+          optimizedPipelineMs < serializedReferenceMs * 0.8,
+          `${providerId} should overlap mock provider selection with debounce`
         );
-        const improvementPercent = Math.round((1 - optimizedPipelineMs / legacySerializedMs) * 100);
         console.log(
-          `[MOCK PERF] ${providerId}: legacy serialized ${legacySerializedMs.toFixed(1)} ms -> ` +
-          `optimized pipeline ${optimizedPipelineMs.toFixed(1)} ms (${improvementPercent}% lower); ` +
-          `provider delay fixed at 12 ms`
+          `[MOCK SCHEDULE] ${providerId}: synthetic serial reference ${serializedReferenceMs.toFixed(1)} ms -> ` +
+          `current mock pipeline ${optimizedPipelineMs.toFixed(1)} ms; no provider contacted, ` +
+          `mock generation delay fixed at 12 ms`
         );
       }
 
@@ -645,6 +644,7 @@ class MockMemento {
         assert.strictEqual(providerMetrics.requests, 1, `${providerId} should be measured`);
         assert.strictEqual(providerMetrics.timings.generationMs.count, 1);
         assert.strictEqual(providerMetrics.timings.responseHeadersMs.averageMs, 3);
+        assert.strictEqual(providerMetrics.timings.promptConstructionMs.count, 1);
         assert.ok(providerMetrics.timings.generationMs.averageMs >= 10);
       }
     } finally {
@@ -677,6 +677,27 @@ class MockMemento {
       linePrefix: 'const value = x',
       prefix: 'const value = x'
     }, { triggerKind: 1 }, []), 0);
+  });
+
+  await test('Adaptive debounce adjusts to measured provider latency and reports P95', () => {
+    const h = createTestHarness();
+    h.quotaManager.getConfig = (key, fallback) => key === 'debounceMs' ? 150 : fallback;
+    const provider = new LavenInlineCompletionProvider({
+      quotaManager: h.quotaManager,
+      secretManager: h.secretManager,
+      providerManager: h.providerManager
+    });
+    const context = { linePrefix: 'const value = x', prefix: 'const value = x' };
+
+    [1500, 1600, 1700].forEach(value => provider._recordTiming(PROVIDERS.FREELLMAPI, 'generationMs', value));
+    assert.strictEqual(provider._getAdaptiveDebounceMs(context, { triggerKind: 0 }, [], PROVIDERS.FREELLMAPI), 110);
+
+    [100, 120, 140].forEach(value => provider._recordTiming(PROVIDERS.GEMINI, 'generationMs', value));
+    assert.strictEqual(provider._getAdaptiveDebounceMs(context, { triggerKind: 0 }, [], PROVIDERS.GEMINI), 175);
+
+    const metrics = provider.getPerformanceMetrics();
+    assert.strictEqual(metrics.providers[PROVIDERS.FREELLMAPI].timings.generationMs.medianMs, 1600);
+    assert.strictEqual(metrics.providers[PROVIDERS.FREELLMAPI].timings.generationMs.p95Ms, 1700);
   });
 
   await test('A newer inline request immediately aborts the older provider call', async () => {
@@ -719,20 +740,108 @@ class MockMemento {
       }
     });
 
+    const makeDocument = source => {
+      const lines = source.split('\n');
+      const offsets = [];
+      let offset = 0;
+      for (const line of lines) {
+        offsets.push(offset);
+        offset += line.length + 1;
+      }
+      return {
+        uri: { toString: () => 'file:///rapid-typing.js' },
+        fileName: 'rapid-typing.js',
+        languageId: 'javascript',
+        lineCount: lines.length,
+        lineAt: line => ({ text: lines[line] }),
+        offsetAt: position => offsets[position.line] + position.character,
+        positionAt: positionOffset => {
+          let line = 0;
+          while (line + 1 < offsets.length && offsets[line + 1] <= positionOffset) line++;
+          return new mockVscode.Position(line, Math.min(lines[line].length, positionOffset - offsets[line]));
+        },
+        getText: range => range
+          ? source.slice(offsets[range.start.line] + range.start.character, offsets[range.end.line] + range.end.character)
+          : source
+      };
+    };
+    const firstDocument = makeDocument('function compute() {\n    \n}');
+    const changedDocument = makeDocument('function compute() {\n    r\n}');
+
+    try {
+      const provider = new LavenInlineCompletionProvider({
+        quotaManager: h.quotaManager,
+        secretManager: h.secretManager,
+        providerManager: h.providerManager
+      });
+      const position = new mockVscode.Position(1, 4);
+      const token = { isCancellationRequested: false };
+      const firstPromise = provider.provideInlineCompletionItems(firstDocument, position, {}, token);
+      await firstStarted;
+      const secondPromise = provider.provideInlineCompletionItems(
+        changedDocument,
+        new mockVscode.Position(1, 5),
+        {},
+        token
+      );
+      const [first, second] = await Promise.all([firstPromise, secondPromise]);
+
+      assert.strictEqual(firstSignal.aborted, true);
+      assert.deepStrictEqual(first, []);
+      assert.strictEqual(second.length, 1);
+      assert.strictEqual(second[0].insertText, 'eturn 42;');
+      assert.strictEqual(`    r${second[0].insertText}`, '    return 42;');
+      assert.strictEqual(provider.getPerformanceMetrics().cancellations, 1);
+    } finally {
+      ProviderFactory.create = originalCreate;
+    }
+  });
+
+  await test('Concurrent identical inline requests share one provider completion', async () => {
+    const h = createTestHarness();
+    h.quotaManager.getConfig = (key, fallback) => {
+      if (key === 'debounceMs') return 0;
+      if (key === 'maxInputTokens') return 1500;
+      if (key === 'maxOutputTokens') return 48;
+      return fallback;
+    };
+    h.secretManager.getApiKey = async () => 'mock-provider-key';
+    h.quotaManager.selectProviderForInline = async () => ({
+      providerId: PROVIDERS.FREELLMAPI,
+      model: 'auto:fast',
+      isLocal: false,
+      provider: { endpoint: 'http://127.0.0.1:31415/v1' }
+    });
+
+    const { ProviderFactory } = require('../src/providers/providerFactory');
+    const originalCreate = ProviderFactory.create;
+    let requestCount = 0;
+    let resolveStarted;
+    const firstStarted = new Promise(resolve => { resolveStarted = resolve; });
+    ProviderFactory.create = () => ({
+      completeInline: async (prefix, suffix, config) => {
+        requestCount++;
+        assert.ok(config.signal);
+        resolveStarted();
+        await new Promise(resolve => setTimeout(resolve, 20));
+        return { text: 'return 42;', finishReason: 'stop', usage: {} };
+      }
+    });
+
     const source = 'function compute() {\n    \n}';
     const lines = source.split('\n');
     const offsets = [0, lines[0].length + 1, lines[0].length + lines[1].length + 2];
     const document = {
-      uri: { toString: () => 'file:///rapid-typing.js' },
-      fileName: 'rapid-typing.js',
+      uri: { toString: () => 'file:///deduplicated.js' },
+      fileName: 'deduplicated.js',
       languageId: 'javascript',
       lineCount: lines.length,
       lineAt: line => ({ text: lines[line] }),
       offsetAt: position => offsets[position.line] + position.character,
-      positionAt: offset => {
+      positionAt: positionOffset => {
         let line = 0;
-        while (line + 1 < offsets.length && offsets[line + 1] <= offset) line++;
-        return new mockVscode.Position(line, Math.min(lines[line].length, offset - offsets[line]));
+        while (line + 1 < offsets.length && offsets[line + 1] <= positionOffset) line++;
+        return new mockVscode.Position(line, Math.min(lines[line].length, positionOffset - offsets[line]));
       },
       getText: range => range
         ? source.slice(offsets[range.start.line] + range.start.character, offsets[range.end.line] + range.end.character)
@@ -752,11 +861,13 @@ class MockMemento {
       const secondPromise = provider.provideInlineCompletionItems(document, position, {}, token);
       const [first, second] = await Promise.all([firstPromise, secondPromise]);
 
-      assert.strictEqual(firstSignal.aborted, true);
-      assert.deepStrictEqual(first, []);
-      assert.strictEqual(second.length, 1);
+      assert.strictEqual(requestCount, 1);
+      assert.strictEqual(first[0].insertText, 'return 42;');
       assert.strictEqual(second[0].insertText, 'return 42;');
-      assert.strictEqual(provider.getPerformanceMetrics().cancellations, 1);
+      assert.strictEqual(
+        provider.getPerformanceMetrics().providers[PROVIDERS.FREELLMAPI].deduplicatedRequests,
+        1
+      );
     } finally {
       ProviderFactory.create = originalCreate;
     }

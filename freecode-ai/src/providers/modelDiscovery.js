@@ -4,6 +4,7 @@
  * with fallback to the verified default registry when offline.
  */
 
+const crypto = require('crypto');
 const { PROVIDERS } = require('../config/providers');
 const { getDefaultModels } = require('../config/modelRegistry');
 const httpClient = require('../utils/httpClient');
@@ -19,51 +20,132 @@ class ModelDiscovery {
    */
   static async fetchModels(providerId, options = {}) {
     const fallback = getDefaultModels(providerId);
+    const cacheKey = ModelDiscovery._cacheKey(providerId, options);
+    const now = Date.now();
+    const cached = ModelDiscovery._cache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      ModelDiscovery._cache.delete(cacheKey);
+      ModelDiscovery._cache.set(cacheKey, cached);
+      return ModelDiscovery._cloneModels(cached.models);
+    }
+    if (cached) ModelDiscovery._cache.delete(cacheKey);
 
+    const pending = ModelDiscovery._inFlight.get(cacheKey);
+    if (pending) {
+      const result = await pending;
+      return ModelDiscovery._cloneModels(result.models);
+    }
+
+    const request = ModelDiscovery._fetchModelsUncached(providerId, options, fallback);
+    ModelDiscovery._inFlight.set(cacheKey, request);
     try {
+      const result = await request;
+      if (result.live && result.models.length > 0) {
+        ModelDiscovery._cache.set(cacheKey, {
+          models: result.models,
+          expiresAt: Date.now() + ModelDiscovery.CACHE_TTL_MS
+        });
+        while (ModelDiscovery._cache.size > ModelDiscovery.CACHE_MAX_SIZE) {
+          ModelDiscovery._cache.delete(ModelDiscovery._cache.keys().next().value);
+        }
+      }
+      return ModelDiscovery._cloneModels(result.models);
+    } finally {
+      if (ModelDiscovery._inFlight.get(cacheKey) === request) {
+        ModelDiscovery._inFlight.delete(cacheKey);
+      }
+    }
+  }
+
+  static async _fetchModelsUncached(providerId, options, fallback) {
+    try {
+      let models;
       switch (providerId) {
         case PROVIDERS.FREELLMAPI:
-          return await ModelDiscovery._fetchFreeLLMAPIModels(options.apiKey, options.endpoint, fallback);
+          models = await ModelDiscovery._fetchFreeLLMAPIModels(options.apiKey, options.endpoint, fallback);
+          break;
 
         case PROVIDERS.GEMINI:
-          return await ModelDiscovery._fetchGeminiModels(options.apiKey, fallback);
+          models = await ModelDiscovery._fetchGeminiModels(options.apiKey, fallback);
+          break;
 
         case PROVIDERS.GROQ:
-          return await ModelDiscovery._fetchGroqModels(options.apiKey, fallback);
+          models = await ModelDiscovery._fetchGroqModels(options.apiKey, fallback);
+          break;
 
         case PROVIDERS.OPENROUTER:
-          return await ModelDiscovery._fetchOpenRouterModels(options.apiKey, fallback);
+          models = await ModelDiscovery._fetchOpenRouterModels(options.apiKey, fallback);
+          break;
 
         case PROVIDERS.OLLAMA:
-          return await ModelDiscovery._fetchOllamaModels(options.endpoint || 'http://127.0.0.1:11434', fallback);
+          models = await ModelDiscovery._fetchOllamaModels(options.endpoint || 'http://127.0.0.1:11434', fallback);
+          break;
 
         case PROVIDERS.COHERE:
-          return await ModelDiscovery._fetchCohereModels(options.apiKey, fallback);
+          models = await ModelDiscovery._fetchCohereModels(options.apiKey, fallback);
+          break;
 
         case PROVIDERS.MISTRAL:
-          return await ModelDiscovery._fetchMistralModels(options.apiKey, fallback);
+          models = await ModelDiscovery._fetchMistralModels(options.apiKey, fallback);
+          break;
 
         case PROVIDERS.CLOUDFLARE:
-          return await ModelDiscovery._fetchCloudflareModels(options.apiKey, options.endpoint, fallback);
+          models = await ModelDiscovery._fetchCloudflareModels(options.apiKey, options.endpoint, fallback);
+          break;
 
         case PROVIDERS.NVIDIA:
-          return await ModelDiscovery._fetchNvidiaModels(options.apiKey, options.endpoint, fallback);
+          models = await ModelDiscovery._fetchNvidiaModels(options.apiKey, options.endpoint, fallback);
+          break;
 
         case PROVIDERS.DEEPSEEK:
-          return await ModelDiscovery._fetchDeepSeekModels(options.apiKey, fallback);
+          models = await ModelDiscovery._fetchDeepSeekModels(options.apiKey, fallback);
+          break;
 
         case PROVIDERS.HUGGINGFACE:
-          return await ModelDiscovery._fetchHuggingFaceModels(options.apiKey, fallback);
+          models = await ModelDiscovery._fetchHuggingFaceModels(options.apiKey, fallback);
+          break;
 
         case PROVIDERS.OPENAI:
-          return await ModelDiscovery._fetchOpenAIModels(options.apiKey, fallback);
+          models = await ModelDiscovery._fetchOpenAIModels(options.apiKey, fallback);
+          break;
 
         default:
-          return fallback;
+          models = fallback;
       }
+      return { models, live: models !== fallback };
     } catch (err) {
-      console.warn(`FreeCode AI: Failed to fetch live models for ${providerId}, using default registry:`, err.message);
-      return fallback;
+      const message = ModelDiscovery._redactApiKey(err?.message || String(err), options.apiKey);
+      console.warn(`FreeCode AI: Failed to fetch live models for ${providerId}, using default registry:`, message);
+      return { models: fallback, live: false };
+    }
+  }
+
+  static _cacheKey(providerId, options) {
+    const credentialHash = options.apiKey
+      ? crypto.createHash('sha256').update(options.apiKey).digest('hex')
+      : '';
+    return `${providerId}:${options.endpoint || ''}:${credentialHash}`;
+  }
+
+  static _cloneModels(models) {
+    return Array.isArray(models) ? models.map(model => ({ ...model })) : [];
+  }
+
+  static _redactApiKey(message, apiKey) {
+    if (!apiKey) return String(message);
+    const encodedKey = encodeURIComponent(apiKey);
+    return String(message)
+      .split(apiKey).join('[REDACTED]')
+      .split(encodedKey).join('[REDACTED]');
+  }
+
+  static clearCache(providerId) {
+    if (!providerId) {
+      ModelDiscovery._cache.clear();
+      return;
+    }
+    for (const key of ModelDiscovery._cache.keys()) {
+      if (key.startsWith(`${providerId}:`)) ModelDiscovery._cache.delete(key);
     }
   }
 
@@ -440,5 +522,10 @@ class ModelDiscovery {
     return models.length > 0 ? models : fallback;
   }
 }
+
+ModelDiscovery.CACHE_TTL_MS = 30000;
+ModelDiscovery.CACHE_MAX_SIZE = 64;
+ModelDiscovery._cache = new Map();
+ModelDiscovery._inFlight = new Map();
 
 module.exports = { ModelDiscovery };

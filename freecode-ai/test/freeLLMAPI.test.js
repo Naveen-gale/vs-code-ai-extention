@@ -58,20 +58,36 @@ class MockState {
   });
 
   await test('FreeLLMAPI discovers only live model IDs', async () => {
+    ModelDiscovery.clearCache(PROVIDERS.FREELLMAPI);
     const original = httpClient.request;
+    let requestCount = 0;
     httpClient.request = async (url, options) => {
+      requestCount++;
       assert.strictEqual(url, 'http://127.0.0.1:31415/v1/models');
       assert.strictEqual(options.headers.Authorization, 'Bearer freellmapi-test');
+      await new Promise(resolve => setTimeout(resolve, 5));
       return { data: [{ id: 'live-model-a' }, { id: 'live-model-b' }] };
     };
     try {
-      const models = await ModelDiscovery.fetchModels('freellmapi', {
+      const discoveryOptions = {
         apiKey: 'freellmapi-test',
         endpoint: 'http://127.0.0.1:31415/v1'
-      });
+      };
+      const [models, concurrentModels] = await Promise.all([
+        ModelDiscovery.fetchModels('freellmapi', discoveryOptions),
+        ModelDiscovery.fetchModels('freellmapi', discoveryOptions)
+      ]);
       assert.deepStrictEqual(models.map(m => m.id), ['live-model-a', 'live-model-b']);
+      assert.deepStrictEqual(concurrentModels.map(m => m.id), ['live-model-a', 'live-model-b']);
+      assert.strictEqual(requestCount, 1, 'Concurrent model discovery should share one API request');
+
+      models[0].name = 'caller mutation';
+      const cachedModels = await ModelDiscovery.fetchModels('freellmapi', discoveryOptions);
+      assert.strictEqual(cachedModels[0].name, 'live-model-a', 'Callers must not mutate the cached model list');
+      assert.strictEqual(requestCount, 1, 'Cached model discovery should avoid another API request');
     } finally {
       httpClient.request = original;
+      ModelDiscovery.clearCache(PROVIDERS.FREELLMAPI);
     }
   });
 
@@ -211,9 +227,19 @@ class MockState {
         model: 'live-model-a',
         endpoint: 'http://127.0.0.1:31415/v1'
       });
-      const response = await provider.completeStream([{ role: 'user', content: 'completion' }]);
+      let responseHeadersMs = null;
+      let firstTokenMs = null;
+      const response = await provider.completeStream(
+        [{ role: 'user', content: 'completion' }],
+        {
+          onResponseHeaders: elapsedMs => { responseHeadersMs = elapsedMs; },
+          onFirstToken: elapsedMs => { firstTokenMs = elapsedMs; }
+        }
+      );
       assert.strictEqual(response.text, 'system');
       assert.strictEqual(response.finishReason, 'stop');
+      assert.ok(Number.isFinite(responseHeadersMs) && responseHeadersMs >= 0);
+      assert.ok(Number.isFinite(firstTokenMs) && firstTokenMs >= responseHeadersMs);
     } finally {
       global.fetch = originalFetch;
     }

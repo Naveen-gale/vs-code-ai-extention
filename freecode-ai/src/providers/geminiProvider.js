@@ -84,7 +84,9 @@ class GeminiProvider {
       method: 'POST',
       body: JSON.stringify(body),
       signal: config.signal,
-      onResponseHeaders: config.onResponseHeaders
+      onResponseHeaders: config.onResponseHeaders,
+      onResponseParsed: config.onResponseParsed,
+      maxResponseBytes: config.maxResponseBytes
     }, config.timeoutMs || 45000);
 
     const candidate = data?.candidates?.[0];

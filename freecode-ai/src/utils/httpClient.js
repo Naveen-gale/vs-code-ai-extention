@@ -12,6 +12,49 @@ class HttpError extends Error {
   }
 }
 
+const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
+
+async function readResponseText(response, maxResponseBytes) {
+  const contentLength = response.headers && typeof response.headers.get === 'function'
+    ? Number(response.headers.get('content-length'))
+    : 0;
+  if (Number.isFinite(contentLength) && contentLength > maxResponseBytes) {
+    throw new HttpError(`Provider response exceeded the ${maxResponseBytes}-byte limit.`, 413, null, response.headers);
+  }
+
+  const reader = response.body && typeof response.body.getReader === 'function'
+    ? response.body.getReader()
+    : null;
+  if (!reader) {
+    const text = await response.text();
+    if (Buffer.byteLength(text, 'utf8') > maxResponseBytes) {
+      throw new HttpError(`Provider response exceeded the ${maxResponseBytes}-byte limit.`, 413, null, response.headers);
+    }
+    return text;
+  }
+
+  const chunks = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxResponseBytes) {
+        try {
+          await reader.cancel();
+        } catch (_) {}
+        throw new HttpError(`Provider response exceeded the ${maxResponseBytes}-byte limit.`, 413, null, response.headers);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    if (typeof reader.releaseLock === 'function') reader.releaseLock();
+  }
+
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 /**
  * Perform a JSON request with timeout and abort signal support.
  * @param {string} url
@@ -45,24 +88,36 @@ async function request(url, options = {}, timeoutMs = 30000) {
       'Content-Type': 'application/json',
       ...(options.headers || {})
     };
-    const { onResponseHeaders, ...fetchOptions } = options;
+    const {
+      onResponseHeaders,
+      onResponseParsed,
+      maxResponseBytes: configuredMaxResponseBytes,
+      ...fetchOptions
+    } = options;
+    const maxResponseBytes = Number.isFinite(configuredMaxResponseBytes) && configuredMaxResponseBytes > 0
+      ? Math.floor(configuredMaxResponseBytes)
+      : DEFAULT_MAX_RESPONSE_BYTES;
 
     const response = await fetch(url, {
       ...fetchOptions,
       headers,
       signal: controller.signal
     });
-    clearTimeout(timeoutId);
     if (typeof onResponseHeaders === 'function') {
       onResponseHeaders(Number(process.hrtime.bigint() - requestStartedAt) / 1e6);
     }
 
-    const rawText = await response.text();
+    const rawText = await readResponseText(response, maxResponseBytes);
     let data;
+    const parsingStartedAt = process.hrtime.bigint();
     try {
       data = JSON.parse(rawText);
     } catch {
       data = rawText;
+    } finally {
+      if (typeof onResponseParsed === 'function') {
+        onResponseParsed(Number(process.hrtime.bigint() - parsingStartedAt) / 1e6);
+      }
     }
 
     if (!response.ok) {

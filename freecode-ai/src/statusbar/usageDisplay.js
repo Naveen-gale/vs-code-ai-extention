@@ -138,15 +138,29 @@ class UsageDisplay {
         : null;
       if (providerPerformance) {
         const timings = providerPerformance.timings || {};
-        const generation = timings.generationMs ? `${timings.generationMs.averageMs} ms` : 'n/a';
+        const generation = timings.generationMs
+          ? `${timings.generationMs.averageMs} avg / ${timings.generationMs.medianMs} p50 / ${timings.generationMs.p95Ms} p95 ms`
+          : 'n/a';
         const headers = timings.responseHeadersMs ? `${timings.responseHeadersMs.averageMs} ms` : 'n/a';
         const total = timings.totalLatencyMs ? `${timings.totalLatencyMs.averageMs} ms` : 'n/a';
         const context = performance.contextTimings.contextPreparationMs
           ? `${performance.contextTimings.contextPreparationMs.averageMs} ms`
           : 'n/a';
         const debounce = timings.debounceMs ? `${timings.debounceMs.averageMs} ms` : 'n/a';
-        lines.push(`**Inline Performance (${activeProvider}):** headers ${headers} • generation ${generation} • total ${total} • context ${context} • debounce ${debounce}`);
-        lines.push(`**Inline Errors:** ${providerPerformance.providerErrors || 0} • **Rate limits:** ${providerPerformance.rateLimits || 0} • **Cancellations:** ${performance.cancellations}`);
+        const selection = timings.providerSelectionMs ? `${timings.providerSelectionMs.averageMs} ms` : 'n/a';
+        const setup = timings.providerSetupMs ? `${timings.providerSetupMs.averageMs} ms` : 'n/a';
+        const prompt = timings.promptConstructionMs ? `${timings.promptConstructionMs.averageMs} ms` : 'n/a';
+        const parsing = timings.responseParsingMs ? `${timings.responseParsingMs.averageMs} ms` : 'n/a';
+        lines.push(
+          `**Inline Performance (${activeProvider}):** selection/config ${selection} • setup ${setup} • ` +
+          `prompt ${prompt} • headers ${headers} • parse ${parsing} • generation ${generation} • ` +
+          `total ${total} • context ${context} • debounce ${debounce}`
+        );
+        lines.push(
+          `**Inline Errors:** ${providerPerformance.providerErrors || 0} (${providerPerformance.errorRatePercent || 0}%) • ` +
+          `**Rate limits:** ${providerPerformance.rateLimits || 0} (${providerPerformance.rateLimitPercent || 0}%) • ` +
+          `**Cancellations:** ${performance.cancellations}`
+        );
       }
 
       if (d.cache) {

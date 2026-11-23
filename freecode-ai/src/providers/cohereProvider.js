@@ -49,7 +49,9 @@ class CohereProvider {
       },
       body: JSON.stringify(body),
       signal: config.signal,
-      onResponseHeaders: config.onResponseHeaders
+      onResponseHeaders: config.onResponseHeaders,
+      onResponseParsed: config.onResponseParsed,
+      maxResponseBytes: config.maxResponseBytes
     }, config.timeoutMs || 45000);
 
     // Extract text from Cohere v2 response format or v1 fallback
