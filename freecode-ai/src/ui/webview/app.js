@@ -85,12 +85,29 @@
   const dashTokensSaved = document.getElementById('dash-tokens-saved');
   const dashSavingsBadge = document.getElementById('dash-savings-badge');
 
+  // DOM Elements - History
+  const historySessionsList = document.getElementById('history-sessions-list');
+  const btnViewHistory = document.getElementById('btn-view-history');
+  const btnHistoryNewChat = document.getElementById('btn-history-new-chat');
+  const btnClearAllHistory = document.getElementById('btn-clear-all-history');
+  const historySearchInput = document.getElementById('history-search-input');
+  const historyBadge = document.getElementById('history-badge');
+
+  // DOM Elements - History Confirmation Modal
+  const historyConfirmModal = document.getElementById('history-confirm-modal');
+  const historyConfirmTitle = document.getElementById('history-confirm-title');
+  const historyConfirmMsg = document.getElementById('history-confirm-msg');
+  const btnCancelHistoryDelete = document.getElementById('btn-cancel-history-delete');
+  const btnExecuteHistoryDelete = document.getElementById('btn-execute-history-delete');
+
   // State
   let currentActiveProvider = null;
   let currentActiveModel = null;
   let modalTargetProvider = null;
   let cachedProvidersList = [];
   let modalModels = [];
+  let cachedChatHistory = [];
+  let pendingDeleteSessionId = null;
 
   function updateHeaderPill(provider, model, providerName) {
     if (!activeModelPill) return;
@@ -146,6 +163,10 @@
       if (vscode) {
         vscode.postMessage({ command: 'getProvidersList' });
       }
+    } else if (tabId === 'history') {
+      if (vscode) {
+        vscode.postMessage({ command: 'getChatHistory' });
+      }
     }
   }
 
@@ -155,6 +176,10 @@
 
   if (activeModelPill) {
     activeModelPill.addEventListener('click', () => switchTab('settings'));
+  }
+
+  if (btnViewHistory) {
+    btnViewHistory.addEventListener('click', () => switchTab('history'));
   }
 
   // 2. Chat Logic & Markdown / Code Rendering System
@@ -645,6 +670,209 @@
       sendMessage();
     });
   });
+
+  // 2.1 Chat History Management Logic
+  function formatRelativeDate(dateStr) {
+    if (!dateStr) return '';
+    try {
+      const d = new Date(dateStr);
+      const now = new Date();
+      const diffMs = now - d;
+      const diffMin = Math.floor(diffMs / 60000);
+      const diffHrs = Math.floor(diffMin / 60);
+      const diffDays = Math.floor(diffHrs / 24);
+
+      if (diffMin < 1) return 'Just now';
+      if (diffMin < 60) return `${diffMin}m ago`;
+      if (diffHrs < 24) return `${diffHrs}h ago`;
+      if (diffDays === 1) return 'Yesterday';
+      if (diffDays < 7) return `${diffDays}d ago`;
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    } catch {
+      return '';
+    }
+  }
+
+  function renderChatHistory(sessions) {
+    cachedChatHistory = Array.isArray(sessions) ? sessions : [];
+
+    // Update history tab badge
+    if (historyBadge) {
+      if (cachedChatHistory.length > 0) {
+        historyBadge.textContent = cachedChatHistory.length;
+        historyBadge.style.display = 'inline-block';
+      } else {
+        historyBadge.style.display = 'none';
+      }
+    }
+
+    if (!historySessionsList) return;
+
+    const searchTerm = (historySearchInput ? historySearchInput.value : '').trim().toLowerCase();
+    const filtered = searchTerm
+      ? cachedChatHistory.filter(s =>
+          (s.title && s.title.toLowerCase().includes(searchTerm)) ||
+          (s.preview && s.preview.toLowerCase().includes(searchTerm)) ||
+          (s.model && s.model.toLowerCase().includes(searchTerm))
+        )
+      : cachedChatHistory;
+
+    historySessionsList.innerHTML = '';
+
+    if (filtered.length === 0) {
+      historySessionsList.innerHTML = `
+        <div class="empty-history-box">
+          <div class="empty-history-icon">💬</div>
+          <h4>${searchTerm ? 'No Matching Conversations' : 'No Chat History Yet'}</h4>
+          <p>${searchTerm ? 'Try a different search term.' : 'When you chat with Laven, your conversations are automatically saved here so you can revisit them anytime.'}</p>
+          ${!searchTerm ? '<button id="btn-empty-start-chat" class="primary-btn btn-sm">+ Start a Chat</button>' : ''}
+        </div>
+      `;
+      const btnEmptyStart = document.getElementById('btn-empty-start-chat');
+      if (btnEmptyStart) {
+        btnEmptyStart.addEventListener('click', () => {
+          switchTab('chat');
+        });
+      }
+      return;
+    }
+
+    filtered.forEach(session => {
+      const card = document.createElement('div');
+      card.className = `history-card ${session.isActive ? 'active-session' : ''}`;
+      card.dataset.id = session.id;
+
+      const dateText = formatRelativeDate(session.updatedAt || session.createdAt);
+      const msgCount = session.messageCount || 0;
+      const countText = `${msgCount} message${msgCount === 1 ? '' : 's'}`;
+      const modelTag = session.model ? `<span class="history-model-tag">${escapeHtml(session.model)}</span>` : '';
+
+      card.innerHTML = `
+        <div class="history-card-header">
+          <div class="history-card-title-row">
+            <span class="history-title" title="${escapeHtml(session.title)}">${escapeHtml(session.title)}</span>
+            ${session.isActive ? '<span class="active-tag">Active</span>' : ''}
+          </div>
+          <button class="history-delete-btn" title="Delete conversation" data-id="${session.id}">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
+              <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+              <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+            </svg>
+          </button>
+        </div>
+        <div class="history-card-meta">
+          <span class="history-date">${dateText}</span>
+          <span class="history-meta-sep">•</span>
+          <span class="history-msg-count">${countText}</span>
+          ${modelTag ? `<span class="history-meta-sep">•</span>${modelTag}` : ''}
+        </div>
+        ${session.preview ? `<div class="history-preview">${escapeHtml(session.preview)}</div>` : ''}
+        <div class="history-card-actions">
+          <button class="history-resume-btn ${session.isActive ? 'secondary-btn' : 'primary-btn'} btn-sm" data-id="${session.id}">
+            ${session.isActive ? 'Continue Current' : 'Open Conversation'}
+          </button>
+        </div>
+      `;
+
+      // Click card or resume button to open conversation
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.history-delete-btn')) return;
+        loadConversation(session.id);
+      });
+
+      // Delete button
+      const delBtn = card.querySelector('.history-delete-btn');
+      if (delBtn) {
+        delBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          showHistoryDeleteConfirmation(session.id, session.title);
+        });
+      }
+
+      historySessionsList.appendChild(card);
+    });
+  }
+
+  function loadConversation(sessionId) {
+    if (!sessionId) return;
+    if (vscode) {
+      vscode.postMessage({
+        command: 'loadSession',
+        sessionId: sessionId
+      });
+    }
+    switchTab('chat');
+  }
+
+  function showHistoryDeleteConfirmation(sessionId, title) {
+    pendingDeleteSessionId = sessionId;
+    if (historyConfirmTitle) {
+      historyConfirmTitle.textContent = sessionId === '__ALL__' ? 'Clear All Chat History?' : 'Delete Conversation?';
+    }
+    if (historyConfirmMsg) {
+      historyConfirmMsg.textContent = sessionId === '__ALL__'
+        ? 'Are you sure you want to delete all saved conversations? This cannot be undone.'
+        : `Are you sure you want to delete "${title || 'this conversation'}"? This cannot be undone.`;
+    }
+    if (historyConfirmModal) {
+      historyConfirmModal.style.display = 'flex';
+    }
+  }
+
+  function hideHistoryDeleteConfirmation() {
+    pendingDeleteSessionId = null;
+    if (historyConfirmModal) {
+      historyConfirmModal.style.display = 'none';
+    }
+  }
+
+  if (btnCancelHistoryDelete) {
+    btnCancelHistoryDelete.addEventListener('click', hideHistoryDeleteConfirmation);
+  }
+  if (historyConfirmModal) {
+    historyConfirmModal.addEventListener('click', (e) => {
+      if (e.target === historyConfirmModal) hideHistoryDeleteConfirmation();
+    });
+  }
+
+  if (btnExecuteHistoryDelete) {
+    btnExecuteHistoryDelete.addEventListener('click', () => {
+      if (!pendingDeleteSessionId) return;
+      const targetId = pendingDeleteSessionId;
+      hideHistoryDeleteConfirmation();
+      if (vscode) {
+        if (targetId === '__ALL__') {
+          vscode.postMessage({ command: 'clearAllHistory' });
+          showGlobalAlert('Cleared all chat history.', 'info');
+        } else {
+          vscode.postMessage({ command: 'deleteSession', sessionId: targetId });
+          showGlobalAlert('Deleted conversation from history.', 'info');
+        }
+      }
+    });
+  }
+
+  if (btnHistoryNewChat) {
+    btnHistoryNewChat.addEventListener('click', () => {
+      if (vscode) {
+        vscode.postMessage({ command: 'newChat' });
+      }
+      switchTab('chat');
+    });
+  }
+
+  if (btnClearAllHistory) {
+    btnClearAllHistory.addEventListener('click', () => {
+      if (cachedChatHistory.length === 0) return;
+      showHistoryDeleteConfirmation('__ALL__', 'All Conversations');
+    });
+  }
+
+  if (historySearchInput) {
+    historySearchInput.addEventListener('input', () => {
+      renderChatHistory(cachedChatHistory);
+    });
+  }
 
   // 3. Multi-Provider Persistent Dashboard Logic
   function renderProvidersCards(providers) {
@@ -1463,6 +1691,32 @@
           messagesContainer.innerHTML = '';
           msg.state.messages.forEach(appendMessage);
         }
+
+        if (msg.state && Array.isArray(msg.state.chatHistory)) {
+          renderChatHistory(msg.state.chatHistory);
+        }
+        break;
+      }
+
+      case 'chatHistoryUpdated':
+        renderChatHistory(msg.history);
+        break;
+
+      case 'sessionLoaded': {
+        hideTyping();
+        const streamingBubble = messagesContainer.querySelector('.message-bubble.assistant.streaming');
+        if (streamingBubble) streamingBubble.remove();
+        messagesContainer.innerHTML = '';
+        if (msg.messages && Array.isArray(msg.messages) && msg.messages.length > 0) {
+          if (emptyState) emptyState.style.display = 'none';
+          msg.messages.forEach(appendMessage);
+        } else {
+          if (emptyState) {
+            messagesContainer.appendChild(emptyState);
+            emptyState.style.display = 'block';
+          }
+        }
+        switchTab('chat');
         break;
       }
 

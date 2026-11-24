@@ -96,7 +96,55 @@ class ChatProvider {
       case 'clearChat':
         if (this.chatController) this.chatController.newChat();
         this.postMessage({ type: 'chatCleared' });
+        await this.sendChatHistory();
         break;
+
+      case 'getChatHistory':
+        await this.sendChatHistory();
+        break;
+
+      case 'loadSession': {
+        if (this.chatController && message.sessionId) {
+          const session = await this.chatController.loadSession(message.sessionId);
+          if (session) {
+            this.postMessage({
+              type: 'sessionLoaded',
+              session,
+              messages: this.chatController.getMessages()
+            });
+            await this.sendStateUpdate();
+            await this.sendChatHistory();
+          }
+        }
+        break;
+      }
+
+      case 'deleteSession': {
+        if (this.chatController && message.sessionId) {
+          const res = await this.chatController.deleteSession(message.sessionId);
+          await this.sendChatHistory();
+          if (res.wasActive) {
+            if (res.nextActiveId) {
+              this.postMessage({
+                type: 'sessionLoaded',
+                messages: this.chatController.getMessages()
+              });
+            } else {
+              this.postMessage({ type: 'chatCleared' });
+            }
+          }
+        }
+        break;
+      }
+
+      case 'clearAllHistory': {
+        if (this.chatController) {
+          await this.chatController.clearAllHistory();
+          this.postMessage({ type: 'chatCleared' });
+          await this.sendChatHistory();
+        }
+        break;
+      }
 
       case 'getProvidersList':
         await this.sendProvidersList();
@@ -297,8 +345,17 @@ class ChatProvider {
       state: {
         ...state,
         messages: this.chatController ? this.chatController.getMessages() : [],
-        models
+        models,
+        chatHistory: this.chatController ? this.chatController.getHistorySummary() : []
       }
+    });
+  }
+
+  async sendChatHistory() {
+    if (!this.chatController) return;
+    this.postMessage({
+      type: 'chatHistoryUpdated',
+      history: this.chatController.getHistorySummary()
     });
   }
 
@@ -388,6 +445,8 @@ class ChatProvider {
         type: 'messageAdded',
         message: result.assistantMessage
       });
+
+      await this.sendChatHistory();
 
       this.postMessage({ type: 'status', status: 'ready' });
     } catch (err) {

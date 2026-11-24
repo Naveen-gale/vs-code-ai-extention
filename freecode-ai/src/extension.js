@@ -43,7 +43,8 @@ function activate(context) {
             secretManager,
             usageTracker,
             providerManager,
-            initialProvider: activeProvider || null
+            initialProvider: activeProvider || null,
+            context
         });
 
         // Initialize and register the Sidebar Webview View Provider

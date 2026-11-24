@@ -9,6 +9,7 @@ const { getDefaultModelId } = require('../config/modelRegistry');
 const { ProviderFactory } = require('../providers/providerFactory');
 const { PromptBuilder } = require('./promptBuilder');
 const { MessageManager } = require('./messageManager');
+const { ChatHistoryManager } = require('./chatHistoryManager');
 
 class ChatController {
   /**
@@ -20,6 +21,9 @@ class ChatController {
    * @param {string} [options.initialProvider]
    * @param {string} [options.initialModel]
    * @param {string} [options.ollamaEndpoint]
+   * @param {ChatHistoryManager} [options.historyManager]
+   * @param {object} [options.storage]
+   * @param {object} [options.context]
    */
   constructor({
     secretManager,
@@ -28,17 +32,39 @@ class ChatController {
     messageManager = new MessageManager(),
     initialProvider = null,
     initialModel = null,
-    ollamaEndpoint = 'http://127.0.0.1:11434'
+    ollamaEndpoint = 'http://127.0.0.1:11434',
+    historyManager = null,
+    storage = null,
+    context = null
   }) {
     this.secretManager = secretManager;
     this.usageTracker = usageTracker;
     this.providerManager = providerManager;
     this.messageManager = messageManager;
 
+    const effectiveStorage = storage ||
+      (context && (context.globalState || context.workspaceState)) ||
+      (providerManager && (providerManager.globalState || providerManager.context?.globalState)) ||
+      (usageTracker && usageTracker.globalState) ||
+      null;
+
+    this.historyManager = historyManager || new ChatHistoryManager(effectiveStorage);
+
     const savedProvider = providerManager ? providerManager.getActiveProvider() : null;
     this.activeProvider = initialProvider !== undefined ? initialProvider : savedProvider;
     this.activeModel = initialModel || (this.activeProvider ? getDefaultModelId(this.activeProvider) : null);
     this.ollamaEndpoint = ollamaEndpoint;
+
+    // Restore active conversation from history if messageManager is empty
+    if (this.messageManager.getMessages().length === 0) {
+      const activeId = this.historyManager.getActiveSessionId();
+      if (activeId) {
+        const activeSession = this.historyManager.getSession(activeId);
+        if (activeSession && Array.isArray(activeSession.messages) && activeSession.messages.length > 0) {
+          this.messageManager.deserialize(activeSession.messages);
+        }
+      }
+    }
 
     // Load initial stored model asynchronously if providerManager exists
     if (this.providerManager && this.activeProvider) {
@@ -284,6 +310,15 @@ class ChatController {
         usage: response.usage
       });
 
+      // 10. Persist to Chat History
+      if (this.historyManager) {
+        await this.historyManager.saveCurrentSession(
+          this.messageManager.getMessages(),
+          this.activeProvider,
+          this.activeModel
+        );
+      }
+
       return {
         userMessage: userMsg,
         assistantMessage: assistantMsg
@@ -394,6 +429,15 @@ class ChatController {
         model: this.activeModel,
         usage: response.usage
       });
+
+      if (this.historyManager) {
+        await this.historyManager.saveCurrentSession(
+          this.messageManager.getMessages(),
+          this.activeProvider,
+          this.activeModel
+        );
+      }
+
       return { userMessage: userMsg, assistantMessage: assistantMsg };
     } catch (err) {
       let classification = { category: 'UNKNOWN', retryAfterSeconds: 0 };
@@ -407,17 +451,87 @@ class ChatController {
   }
 
   /**
-   * Reset the current conversation.
+   * Reset the current conversation and create a new session,
+   * automatically preserving the previous session in local history.
    */
   newChat() {
+    const currentMsgs = this.messageManager.getMessages();
+    if (this.historyManager) {
+      if (currentMsgs.length > 0) {
+        this.historyManager.saveCurrentSession(currentMsgs, this.activeProvider, this.activeModel);
+      }
+      this.historyManager.createSession({
+        provider: this.activeProvider,
+        model: this.activeModel
+      });
+    }
     this.messageManager.clear();
   }
 
   /**
-   * Get all messages.
+   * Get all messages in active session.
    */
   getMessages() {
     return this.messageManager.getMessages();
+  }
+
+  /**
+   * Get summaries of all saved sessions.
+   * @returns {Array<object>}
+   */
+  getHistorySummary() {
+    return this.historyManager ? this.historyManager.getSessionsSummary() : [];
+  }
+
+  /**
+   * Load and activate a past chat session by ID.
+   * @param {string} sessionId
+   * @returns {Promise<object|null>}
+   */
+  async loadSession(sessionId) {
+    if (!this.historyManager) return null;
+    const currentMsgs = this.messageManager.getMessages();
+    if (currentMsgs.length > 0) {
+      await this.historyManager.saveCurrentSession(currentMsgs, this.activeProvider, this.activeModel);
+    }
+    const session = await this.historyManager.loadSession(sessionId);
+    if (session && Array.isArray(session.messages)) {
+      this.messageManager.deserialize(session.messages);
+      if (session.provider) this.activeProvider = session.provider;
+      if (session.model) this.activeModel = session.model;
+    }
+    return session;
+  }
+
+  /**
+   * Delete a past chat session by ID.
+   * @param {string} sessionId
+   * @returns {Promise<{ deleted: boolean, wasActive: boolean, nextActiveId: string|null }>}
+   */
+  async deleteSession(sessionId) {
+    if (!this.historyManager) return { deleted: false, wasActive: false, nextActiveId: null };
+    const res = await this.historyManager.deleteSession(sessionId);
+    if (res.wasActive) {
+      this.messageManager.clear();
+      if (res.nextActiveId) {
+        const nextSession = this.historyManager.getSession(res.nextActiveId);
+        if (nextSession && Array.isArray(nextSession.messages)) {
+          this.messageManager.deserialize(nextSession.messages);
+        }
+      }
+    }
+    return res;
+  }
+
+  /**
+   * Clear all saved chat history.
+   * @returns {Promise<void>}
+   */
+  async clearAllHistory() {
+    if (this.historyManager) {
+      await this.historyManager.clearAllSessions();
+    }
+    this.messageManager.clear();
   }
 }
 

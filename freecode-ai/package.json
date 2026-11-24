@@ -183,6 +183,6 @@
     }
   },
   "scripts": {
-    "test": "node ./test/day1.test.js && node ./test/upgrade.test.js && node ./test/multiProvider.test.js && node ./test/day2Ui.test.js && node ./test/newProviders.test.js && node ./test/autocomplete.test.js && node ./test/quotaAndInline.test.js && node ./test/freeLLMAPI.test.js && node ./test/chatUiOutput.test.js"
+    "test": "node ./test/day1.test.js && node ./test/upgrade.test.js && node ./test/multiProvider.test.js && node ./test/day2Ui.test.js && node ./test/newProviders.test.js && node ./test/autocomplete.test.js && node ./test/quotaAndInline.test.js && node ./test/freeLLMAPI.test.js && node ./test/chatUiOutput.test.js && node ./test/chatHistory.test.js"
   }
 }
